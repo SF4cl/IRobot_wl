@@ -96,14 +96,16 @@ from isaaclab.utils.io import dump_yaml
 
 from isaaclab_rl.rsl_rl import RslRlBaseRunnerCfg, RslRlVecEnvWrapper, handle_deprecated_rsl_rl_cfg
 
-import isaaclab_tasks  # noqa: F401
 from isaaclab_tasks.utils import get_checkpoint_path
 from isaaclab_tasks.utils.hydra import hydra_task_config
+
+import IRobot_wl.tasks  # noqa: F401  # isort: skip
+from wl_sequence import WlSequenceRunner
 
 # import logger
 logger = logging.getLogger(__name__)
 
-import IRobot_wl.tasks  # noqa: F401
+# PLACEHOLDER: Extension template (do not remove this comment)
 
 torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
@@ -122,7 +124,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     )
 
     # handle deprecated configurations
-    agent_cfg = handle_deprecated_rsl_rl_cfg(agent_cfg, installed_version)
+    if agent_cfg.class_name != "WlSequenceRunner":
+        agent_cfg = handle_deprecated_rsl_rl_cfg(agent_cfg, installed_version)
 
     # set the environment seed
     # note: certain randomizations occur in the environment initialization so we set the seed here
@@ -195,15 +198,23 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     start_time = time.time()
 
     # wrap around environment for rsl-rl
+    print("[DEBUG] Wrapping env with RslRlVecEnvWrapper...")
     env = RslRlVecEnvWrapper(env, clip_actions=agent_cfg.clip_actions)
+    print("[DEBUG] Env wrapper ready.")
 
     # create runner from rsl-rl
     if agent_cfg.class_name == "OnPolicyRunner":
+        print("[DEBUG] Creating OnPolicyRunner...")
         runner = OnPolicyRunner(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
+    elif agent_cfg.class_name == "WlSequenceRunner":
+        print("[DEBUG] Creating WlSequenceRunner...")
+        runner = WlSequenceRunner(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
     elif agent_cfg.class_name == "DistillationRunner":
+        print("[DEBUG] Creating DistillationRunner...")
         runner = DistillationRunner(env, agent_cfg.to_dict(), log_dir=log_dir, device=agent_cfg.device)
     else:
         raise ValueError(f"Unsupported runner class: {agent_cfg.class_name}")
+    print("[DEBUG] Runner created.")
     # write git state to logs
     runner.add_git_repo_to_log(__file__)
     # load the checkpoint
