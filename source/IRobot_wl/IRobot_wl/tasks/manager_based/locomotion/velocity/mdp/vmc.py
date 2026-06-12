@@ -55,15 +55,19 @@ def compute_vmc_state(
     l1: float,
     l2: float,
     offset: float,
+    theta1_offset: float = 0.0,
+    theta2_offset: float = torch.pi / 2,
     dt: float = 0.001,
 ) -> dict[str, torch.Tensor]:
     """Compute the mirrored leg-frame state used by the original WL-Gym VMC."""
 
     theta1 = torch.stack(
-        [dof_pos[:, leg_joint_indices[0]], -dof_pos[:, leg_joint_indices[2]]], dim=1
+        [dof_pos[:, leg_joint_indices[0]] + theta1_offset, -dof_pos[:, leg_joint_indices[2]] + theta1_offset],
+        dim=1,
     )
     theta2 = torch.stack(
-        [dof_pos[:, leg_joint_indices[1]] + torch.pi / 2, -dof_pos[:, leg_joint_indices[3]] + torch.pi / 2], dim=1
+        [dof_pos[:, leg_joint_indices[1]] + theta2_offset, -dof_pos[:, leg_joint_indices[3]] + theta2_offset],
+        dim=1,
     )
     theta1_dot = torch.stack(
         [dof_vel[:, leg_joint_indices[0]], -dof_vel[:, leg_joint_indices[2]]], dim=1
@@ -121,22 +125,23 @@ def inverse_kinematics(
         theta1: Hip joint angles, shape (num_envs, num_legs).
         theta2: Knee joint angles, shape (num_envs, num_legs).
     """
-    # Clamp L0 to avoid numerical issues with acos
-    L0_clamped = torch.clamp(L0, min=abs(l1 - l2) + 1e-4, max=l1 + l2 - 1e-4)
+    gamma = theta0 + torch.pi / 2  # convert to coordinate frame
+    target_x = L0 * torch.cos(gamma) - offset
+    target_y = L0 * torch.sin(gamma)
+    target_len = torch.sqrt(target_x**2 + target_y**2)
+    target_len = torch.clamp(target_len, min=abs(l1 - l2) + 1e-4, max=l1 + l2 - 1e-4)
 
     # Law of cosines for the knee angle
-    cos_beta = (l1**2 + l2**2 - L0_clamped**2) / (2.0 * l1 * l2)
+    cos_beta = (l1**2 + l2**2 - target_len**2) / (2.0 * l1 * l2)
     cos_beta = torch.clamp(cos_beta, -1.0 + 1e-6, 1.0 - 1e-6)
     beta = torch.acos(cos_beta)  # angle between thigh and calf, 0 = fully folded
 
     # Knee joint angle: theta2 = pi - beta (0 = straight leg, positive = backward bend)
     theta2 = torch.pi - beta
 
-    # Hip joint angle from geometry
-    # alpha = angle between thigh and the line from hip to end-effector
-    gamma = theta0 + torch.pi / 2  # convert to coordinate frame
+    # Hip joint angle from geometry, accounting for the fixed hip x-offset.
     alpha = torch.atan2(l2 * torch.sin(theta2), l1 + l2 * torch.cos(theta2))
-    theta1 = gamma - alpha
+    theta1 = torch.atan2(target_y, target_x) - alpha
 
     return theta1, theta2
 
@@ -195,11 +200,16 @@ def compute_vmc_action(
     l1: float,
     l2: float,
     offset: float,
+    theta1_offset: float,
+    theta2_offset: float,
+    theta0_offset: float,
     kp_theta: float,
     kd_theta: float,
     kp_l0: float,
     kd_l0: float,
     l0_offset: float,
+    l0_min: float,
+    l0_max: float,
     feedforward_force: float,
     action_scale_theta: float,
     action_scale_l0: float,
@@ -244,10 +254,11 @@ def compute_vmc_action(
     # --- Parse task-space actions ---
     # Left leg: actions[:, 0:3], Right leg: actions[:, 3:6]
     theta0_ref = torch.stack([actions[:, 0], actions[:, 3]], dim=1)  # (num_envs, 2)
-    theta0_ref = theta0_ref * action_scale_theta
+    theta0_ref = theta0_ref * action_scale_theta + theta0_offset
 
     l0_ref = torch.stack([actions[:, 1], actions[:, 4]], dim=1)  # (num_envs, 2)
     l0_ref = l0_ref * action_scale_l0 + l0_offset
+    l0_ref = torch.clamp(l0_ref, min=l0_min, max=l0_max)
 
     wheel_vel_ref = torch.stack([actions[:, 2], actions[:, 5]], dim=1)  # (num_envs, 2)
     wheel_vel_ref = wheel_vel_ref * action_scale_vel
@@ -260,6 +271,8 @@ def compute_vmc_action(
         l1=l1,
         l2=l2,
         offset=offset,
+        theta1_offset=theta1_offset,
+        theta2_offset=theta2_offset,
     )
     theta1 = state["theta1"]
     theta2 = state["theta2"]
@@ -338,11 +351,16 @@ class WLVMCAction(ActionTerm):
             l1=self.cfg.l1,
             l2=self.cfg.l2,
             offset=self.cfg.offset,
+            theta1_offset=self.cfg.theta1_offset,
+            theta2_offset=self.cfg.theta2_offset,
+            theta0_offset=self.cfg.theta0_offset,
             kp_theta=self.cfg.kp_theta,
             kd_theta=self.cfg.kd_theta,
             kp_l0=self.cfg.kp_l0,
             kd_l0=self.cfg.kd_l0,
             l0_offset=self.cfg.l0_offset,
+            l0_min=self.cfg.l0_min,
+            l0_max=self.cfg.l0_max,
             feedforward_force=self.cfg.feedforward_force,
             action_scale_theta=self.cfg.action_scale_theta,
             action_scale_l0=self.cfg.action_scale_l0,
@@ -365,21 +383,26 @@ class WLVMCActionCfg(ActionTermCfg):
 
     leg_joint_names: list[str] = ["lf0_Joint", "lf1_Joint", "rf0_Joint", "rf1_Joint"]
     wheel_joint_names: list[str] = ["l_wheel_Joint", "r_wheel_Joint"]
-    l1: float = 0.15
-    l2: float = 0.25
-    offset: float = 0.054
+    l1: float = 0.21665632675675972
+    l2: float = 0.2540023491164531
+    offset: float = -0.007712217793726145
+    theta1_offset: float = 0.14299916248023697
+    theta2_offset: float = 2.406020345452543
+    theta0_offset: float = 0.0
     kp_theta: float = 50.0
     kd_theta: float = 3.0
     kp_l0: float = 900.0
     kd_l0: float = 20.0
     l0_offset: float = 0.19
+    l0_min: float = 0.1219258562330587
+    l0_max: float = 0.3006386827708927
     feedforward_force: float = 40.0
     action_scale_theta: float = 0.5
     action_scale_l0: float = 0.1
     action_scale_vel: float = 10.0
     wheel_damping: float = 0.5
     clip_actions: float = 100.0
-    torque_limits: list[float] = [30.0, 30.0, 30.0, 30.0, 5.0, 5.0]
+    torque_limits: list[float] = [30.0, 30.0, 5.0, 30.0, 30.0, 5.0]
 
 
 def convert_vmc_to_joint_actions(
@@ -387,7 +410,12 @@ def convert_vmc_to_joint_actions(
     l1: float,
     l2: float,
     offset: float,
+    theta1_offset: float,
+    theta2_offset: float,
+    theta0_offset: float,
     l0_offset: float,
+    l0_min: float,
+    l0_max: float,
     action_scale_theta: float,
     action_scale_l0: float,
     action_scale_vel: float,
@@ -420,10 +448,11 @@ def convert_vmc_to_joint_actions(
     """
     # Parse task-space actions: [theta0_l, L0_l, w_l, theta0_r, L0_r, w_r]
     theta0 = torch.stack([actions[:, 0], actions[:, 3]], dim=1)  # (num_envs, 2)
-    theta0 = theta0 * action_scale_theta
+    theta0 = theta0 * action_scale_theta + theta0_offset
 
     L0 = torch.stack([actions[:, 1], actions[:, 4]], dim=1)  # (num_envs, 2)
     L0 = L0 * action_scale_l0 + l0_offset
+    L0 = torch.clamp(L0, min=l0_min, max=l0_max)
 
     wheel_vel = torch.stack([actions[:, 2], actions[:, 5]], dim=1)  # (num_envs, 2)
     wheel_vel = wheel_vel * action_scale_vel
@@ -434,17 +463,17 @@ def convert_vmc_to_joint_actions(
 
     # Map leg-frame angles back to the physical joint coordinates expected by
     # the URDF / Isaac Lab articulation. In the original Isaac Gym task:
-    #   left  leg: theta1 =  q_lf0, theta2 =  q_lf1 + pi/2
-    #   right leg: theta1 = -q_rf0, theta2 = -q_rf1 + pi/2
+    #   left  leg: theta1 =  q_lf0 + theta1_offset, theta2 =  q_lf1 + theta2_offset
+    #   right leg: theta1 = -q_rf0 + theta1_offset, theta2 = -q_rf1 + theta2_offset
     # Therefore the inverse mapping is:
-    #   q_lf0 =  theta1_l
-    #   q_lf1 =  theta2_l - pi/2
-    #   q_rf0 = -theta1_r
-    #   q_rf1 =  pi/2 - theta2_r
-    hip_l = theta1[:, 0:1]
-    knee_l = theta2[:, 0:1] - torch.pi / 2
-    hip_r = -theta1[:, 1:2]
-    knee_r = torch.pi / 2 - theta2[:, 1:2]
+    #   q_lf0 =  theta1_l - theta1_offset
+    #   q_lf1 =  theta2_l - theta2_offset
+    #   q_rf0 = -(theta1_r - theta1_offset)
+    #   q_rf1 =  theta2_offset - theta2_r
+    hip_l = theta1[:, 0:1] - theta1_offset
+    knee_l = theta2[:, 0:1] - theta2_offset
+    hip_r = -(theta1[:, 1:2] - theta1_offset)
+    knee_r = theta2_offset - theta2[:, 1:2]
 
     # Assemble: [hip_l, knee_l, hip_r, knee_r, wheel_vel_l, wheel_vel_r]
     joint_actions = torch.cat(
@@ -486,7 +515,12 @@ def apply_vmc_wrapper(env):
             l1=vmc_cfg.l1,
             l2=vmc_cfg.l2,
             offset=vmc_cfg.offset,
+            theta1_offset=vmc_cfg.theta1_offset,
+            theta2_offset=vmc_cfg.theta2_offset,
+            theta0_offset=vmc_cfg.theta0_offset,
             l0_offset=vmc_cfg.l0_offset,
+            l0_min=vmc_cfg.l0_min,
+            l0_max=vmc_cfg.l0_max,
             action_scale_theta=vmc_cfg.action_scale_theta,
             action_scale_l0=vmc_cfg.action_scale_l0,
             action_scale_vel=vmc_cfg.action_scale_vel,

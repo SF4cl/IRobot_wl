@@ -693,9 +693,11 @@ def nominal_state(
     env: ManagerBasedRLEnv,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
     leg_joint_names: list[str] | None = None,
-    l1: float = 0.15,
-    l2: float = 0.25,
-    offset: float = 0.054,
+    l1: float = 0.21665632675675972,
+    l2: float = 0.2540023491164531,
+    offset: float = -0.007712217793726145,
+    theta1_offset: float = 0.14299916248023697,
+    theta2_offset: float = 2.406020345452543,
 ) -> torch.Tensor:
     """Penalize asymmetry between left and right leg angles (VMC key reward).
 
@@ -722,8 +724,8 @@ def nominal_state(
     joint_indices = asset.find_joints(leg_joint_names)[0]
     dof_pos = asset.data.joint_pos[:, joint_indices]
 
-    theta1 = torch.stack([dof_pos[:, 0], -dof_pos[:, 2]], dim=1)
-    theta2 = torch.stack([dof_pos[:, 1] + torch.pi / 2, -dof_pos[:, 3] + torch.pi / 2], dim=1)
+    theta1 = torch.stack([dof_pos[:, 0] + theta1_offset, -dof_pos[:, 2] + theta1_offset], dim=1)
+    theta2 = torch.stack([dof_pos[:, 1] + theta2_offset, -dof_pos[:, 3] + theta2_offset], dim=1)
 
     _, theta0 = forward_kinematics(theta1, theta2, l1, l2, offset)
 
@@ -738,9 +740,11 @@ def leg_length_symmetry(
     env: ManagerBasedRLEnv,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
     leg_joint_names: list[str] | None = None,
-    l1: float = 0.15,
-    l2: float = 0.25,
-    offset: float = 0.054,
+    l1: float = 0.21665632675675972,
+    l2: float = 0.2540023491164531,
+    offset: float = -0.007712217793726145,
+    theta1_offset: float = 0.14299916248023697,
+    theta2_offset: float = 2.406020345452543,
 ) -> torch.Tensor:
     """Penalize left/right leg-length mismatch in task space."""
     from IRobot_wl.tasks.manager_based.locomotion.velocity.mdp.vmc import forward_kinematics
@@ -751,8 +755,8 @@ def leg_length_symmetry(
 
     joint_indices = asset.find_joints(leg_joint_names)[0]
     dof_pos = asset.data.joint_pos[:, joint_indices]
-    theta1 = torch.stack([dof_pos[:, 0], -dof_pos[:, 2]], dim=1)
-    theta2 = torch.stack([dof_pos[:, 1] + torch.pi / 2, -dof_pos[:, 3] + torch.pi / 2], dim=1)
+    theta1 = torch.stack([dof_pos[:, 0] + theta1_offset, -dof_pos[:, 2] + theta1_offset], dim=1)
+    theta2 = torch.stack([dof_pos[:, 1] + theta2_offset, -dof_pos[:, 3] + theta2_offset], dim=1)
     leg_length, _ = forward_kinematics(theta1, theta2, l1, l2, offset)
     reward = torch.square(leg_length[:, 0] - leg_length[:, 1])
     reward *= torch.clamp(-env.scene["robot"].data.projected_gravity_b[:, 2], 0, 0.7) / 0.7

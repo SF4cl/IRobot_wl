@@ -28,9 +28,11 @@ def leg_angle(
     env: ManagerBasedEnv,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
     leg_joint_names: list[str] | None = None,
-    l1: float = 0.15,
-    l2: float = 0.25,
-    offset: float = 0.054,
+    l1: float = 0.21665632675675972,
+    l2: float = 0.2540023491164531,
+    offset: float = -0.007712217793726145,
+    theta1_offset: float = 0.14299916248023697,
+    theta2_offset: float = 2.406020345452543,
 ) -> torch.Tensor:
     """Task-space leg angle (theta0) from joint positions using forward kinematics.
 
@@ -56,8 +58,8 @@ def leg_angle(
     dof_pos = asset.data.joint_pos[:, joint_indices]
 
     # Build theta1 and theta2 per leg
-    theta1 = torch.stack([dof_pos[:, 0], -dof_pos[:, 2]], dim=1)
-    theta2 = torch.stack([dof_pos[:, 1] + torch.pi / 2, -dof_pos[:, 3] + torch.pi / 2], dim=1)
+    theta1 = torch.stack([dof_pos[:, 0] + theta1_offset, -dof_pos[:, 2] + theta1_offset], dim=1)
+    theta2 = torch.stack([dof_pos[:, 1] + theta2_offset, -dof_pos[:, 3] + theta2_offset], dim=1)
 
     _, theta0 = forward_kinematics(theta1, theta2, l1, l2, offset)
     return theta0
@@ -68,9 +70,11 @@ def leg_angle_dot(
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
     leg_joint_names: list[str] | None = None,
     wheel_joint_names: list[str] | None = None,
-    l1: float = 0.15,
-    l2: float = 0.25,
-    offset: float = 0.054,
+    l1: float = 0.21665632675675972,
+    l2: float = 0.2540023491164531,
+    offset: float = -0.007712217793726145,
+    theta1_offset: float = 0.14299916248023697,
+    theta2_offset: float = 2.406020345452543,
 ) -> torch.Tensor:
     """Task-space leg angular velocity theta0_dot using the WL-Gym mirrored convention."""
     from IRobot_wl.tasks.manager_based.locomotion.velocity.mdp.vmc import compute_vmc_state
@@ -81,7 +85,17 @@ def leg_angle_dot(
 
     leg_joint_indices = asset.find_joints(leg_joint_names)[0]
     wheel_joint_indices = asset.find_joints(wheel_joint_names)[0]
-    state = compute_vmc_state(asset.data.joint_pos, asset.data.joint_vel, leg_joint_indices, wheel_joint_indices, l1, l2, offset)
+    state = compute_vmc_state(
+        asset.data.joint_pos,
+        asset.data.joint_vel,
+        leg_joint_indices,
+        wheel_joint_indices,
+        l1,
+        l2,
+        offset,
+        theta1_offset,
+        theta2_offset,
+    )
     return state["theta0_dot"]
 
 
@@ -89,9 +103,11 @@ def leg_length(
     env: ManagerBasedEnv,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
     leg_joint_names: list[str] | None = None,
-    l1: float = 0.15,
-    l2: float = 0.25,
-    offset: float = 0.054,
+    l1: float = 0.21665632675675972,
+    l2: float = 0.2540023491164531,
+    offset: float = -0.007712217793726145,
+    theta1_offset: float = 0.14299916248023697,
+    theta2_offset: float = 2.406020345452543,
 ) -> torch.Tensor:
     """Task-space leg length (L0) from joint positions using forward kinematics.
 
@@ -115,8 +131,8 @@ def leg_length(
     joint_indices = asset.find_joints(leg_joint_names)[0]
     dof_pos = asset.data.joint_pos[:, joint_indices]
 
-    theta1 = torch.stack([dof_pos[:, 0], -dof_pos[:, 2]], dim=1)
-    theta2 = torch.stack([dof_pos[:, 1] + torch.pi / 2, -dof_pos[:, 3] + torch.pi / 2], dim=1)
+    theta1 = torch.stack([dof_pos[:, 0] + theta1_offset, -dof_pos[:, 2] + theta1_offset], dim=1)
+    theta2 = torch.stack([dof_pos[:, 1] + theta2_offset, -dof_pos[:, 3] + theta2_offset], dim=1)
 
     L0, _ = forward_kinematics(theta1, theta2, l1, l2, offset)
     return L0
@@ -127,9 +143,11 @@ def leg_length_dot(
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
     leg_joint_names: list[str] | None = None,
     wheel_joint_names: list[str] | None = None,
-    l1: float = 0.15,
-    l2: float = 0.25,
-    offset: float = 0.054,
+    l1: float = 0.21665632675675972,
+    l2: float = 0.2540023491164531,
+    offset: float = -0.007712217793726145,
+    theta1_offset: float = 0.14299916248023697,
+    theta2_offset: float = 2.406020345452543,
 ) -> torch.Tensor:
     """Task-space leg length velocity L0_dot using the WL-Gym mirrored convention."""
     from IRobot_wl.tasks.manager_based.locomotion.velocity.mdp.vmc import compute_vmc_state
@@ -140,7 +158,17 @@ def leg_length_dot(
 
     leg_joint_indices = asset.find_joints(leg_joint_names)[0]
     wheel_joint_indices = asset.find_joints(wheel_joint_names)[0]
-    state = compute_vmc_state(asset.data.joint_pos, asset.data.joint_vel, leg_joint_indices, wheel_joint_indices, l1, l2, offset)
+    state = compute_vmc_state(
+        asset.data.joint_pos,
+        asset.data.joint_vel,
+        leg_joint_indices,
+        wheel_joint_indices,
+        l1,
+        l2,
+        offset,
+        theta1_offset,
+        theta2_offset,
+    )
     return state["L0_dot"]
 
 

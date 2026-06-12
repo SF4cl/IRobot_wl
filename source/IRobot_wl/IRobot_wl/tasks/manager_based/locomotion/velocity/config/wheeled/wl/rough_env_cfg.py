@@ -165,7 +165,7 @@ class WLRoughEnvCfg(LocomotionVelocityRoughEnvCfg):
         self.rewards.joint_acc_wheel_l2.weight = -2.5e-9
         self.rewards.joint_acc_wheel_l2.params["asset_cfg"].joint_names = self.wheel_joint_names
         self.rewards.joint_pos_limits.weight = -1.0
-        self.rewards.joint_pos_limits.params["asset_cfg"].joint_names = self.leg_joint_names
+        self.rewards.joint_pos_limits.params["asset_cfg"].joint_names = ["lf1_Joint", "rf1_Joint"]
         self.rewards.joint_vel_limits.weight = 0
         self.rewards.joint_power.weight = -2e-5
         self.rewards.joint_power.params["asset_cfg"].joint_names = self.leg_joint_names

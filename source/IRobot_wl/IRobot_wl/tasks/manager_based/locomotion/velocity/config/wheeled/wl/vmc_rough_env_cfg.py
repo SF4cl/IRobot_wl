@@ -47,9 +47,12 @@ class WLVMCVanillaActionsCfg:
     num_actions = 6
 
     # VMC geometry parameters (from URDF)
-    l1: float = 0.15  # thigh length [m]
-    l2: float = 0.25  # calf length [m]
-    offset: float = 0.054  # hip offset [m]
+    l1: float = 0.21665632675675972  # thigh length [m]
+    l2: float = 0.2540023491164531  # calf length [m]
+    offset: float = -0.007712217793726145  # hip offset [m]
+    theta1_offset: float = 0.14299916248023697  # first link zero-angle offset [rad]
+    theta2_offset: float = 2.406020345452543  # knee-to-wheel zero-angle offset [rad]
+    theta0_offset: float = 0.0  # default task-space leg angle [rad]
 
     # VMC PD gains
     kp_theta: float = 50.0  # angle P gain [Nm/rad]
@@ -59,6 +62,8 @@ class WLVMCVanillaActionsCfg:
 
     # VMC parameters
     l0_offset: float = 0.19  # default leg length [m]
+    l0_min: float = 0.1219258562330587  # reachable L0 lower bound [m]
+    l0_max: float = 0.3006386827708927  # reachable L0 upper bound [m]
     feedforward_force: float = 40.0  # gravity compensation [N]
 
     # Action scales
@@ -120,21 +125,26 @@ class WLVMCControlActionsCfg:
         asset_name="robot",
         leg_joint_names=["lf0_Joint", "lf1_Joint", "rf0_Joint", "rf1_Joint"],
         wheel_joint_names=["l_wheel_Joint", "r_wheel_Joint"],
-        l1=0.15,
-        l2=0.25,
-        offset=0.054,
+        l1=0.21665632675675972,
+        l2=0.2540023491164531,
+        offset=-0.007712217793726145,
+        theta1_offset=0.14299916248023697,
+        theta2_offset=2.406020345452543,
+        theta0_offset=0.0,
         kp_theta=50.0,
         kd_theta=3.0,
         kp_l0=900.0,
         kd_l0=20.0,
         l0_offset=0.19,
+        l0_min=0.1219258562330587,
+        l0_max=0.3006386827708927,
         feedforward_force=40.0,
         action_scale_theta=0.5,
         action_scale_l0=0.1,
         action_scale_vel=10.0,
         wheel_damping=0.5,
         clip_actions=100.0,
-        torque_limits=[30.0, 30.0, 30.0, 30.0, 5.0, 5.0],
+        torque_limits=[30.0, 30.0, 5.0, 30.0, 30.0, 5.0],
     )
 
 
@@ -167,9 +177,11 @@ class WLVMCObsCfg(ObservationsCfg):
             params={
                 "asset_cfg": SceneEntityCfg("robot", joint_names=["lf0_Joint", "lf1_Joint", "rf0_Joint", "rf1_Joint"]),
                 "leg_joint_names": ["lf0_Joint", "lf1_Joint", "rf0_Joint", "rf1_Joint"],
-                "l1": 0.15,
-                "l2": 0.25,
-                "offset": 0.054,
+                "l1": 0.21665632675675972,
+                "l2": 0.2540023491164531,
+                "offset": -0.007712217793726145,
+                "theta1_offset": 0.14299916248023697,
+                "theta2_offset": 2.406020345452543,
             },
             noise=Unoise(n_min=-0.01, n_max=0.01),
             clip=(-100.0, 100.0),
@@ -181,9 +193,11 @@ class WLVMCObsCfg(ObservationsCfg):
                 "asset_cfg": SceneEntityCfg("robot", joint_names=["lf0_Joint", "lf1_Joint", "rf0_Joint", "rf1_Joint"]),
                 "leg_joint_names": ["lf0_Joint", "lf1_Joint", "rf0_Joint", "rf1_Joint"],
                 "wheel_joint_names": ["l_wheel_Joint", "r_wheel_Joint"],
-                "l1": 0.15,
-                "l2": 0.25,
-                "offset": 0.054,
+                "l1": 0.21665632675675972,
+                "l2": 0.2540023491164531,
+                "offset": -0.007712217793726145,
+                "theta1_offset": 0.14299916248023697,
+                "theta2_offset": 2.406020345452543,
             },
             noise=Unoise(n_min=-1.5, n_max=1.5),
             clip=(-100.0, 100.0),
@@ -194,9 +208,11 @@ class WLVMCObsCfg(ObservationsCfg):
             params={
                 "asset_cfg": SceneEntityCfg("robot", joint_names=["lf0_Joint", "lf1_Joint", "rf0_Joint", "rf1_Joint"]),
                 "leg_joint_names": ["lf0_Joint", "lf1_Joint", "rf0_Joint", "rf1_Joint"],
-                "l1": 0.15,
-                "l2": 0.25,
-                "offset": 0.054,
+                "l1": 0.21665632675675972,
+                "l2": 0.2540023491164531,
+                "offset": -0.007712217793726145,
+                "theta1_offset": 0.14299916248023697,
+                "theta2_offset": 2.406020345452543,
             },
             noise=Unoise(n_min=-0.02, n_max=0.02),
             clip=(-100.0, 100.0),
@@ -208,9 +224,11 @@ class WLVMCObsCfg(ObservationsCfg):
                 "asset_cfg": SceneEntityCfg("robot", joint_names=["lf0_Joint", "lf1_Joint", "rf0_Joint", "rf1_Joint"]),
                 "leg_joint_names": ["lf0_Joint", "lf1_Joint", "rf0_Joint", "rf1_Joint"],
                 "wheel_joint_names": ["l_wheel_Joint", "r_wheel_Joint"],
-                "l1": 0.15,
-                "l2": 0.25,
-                "offset": 0.054,
+                "l1": 0.21665632675675972,
+                "l2": 0.2540023491164531,
+                "offset": -0.007712217793726145,
+                "theta1_offset": 0.14299916248023697,
+                "theta2_offset": 2.406020345452543,
             },
             noise=Unoise(n_min=-0.1, n_max=0.1),
             clip=(-100.0, 100.0),
@@ -259,9 +277,11 @@ class WLVMCObsCfg(ObservationsCfg):
             params={
                 "asset_cfg": SceneEntityCfg("robot", joint_names=["lf0_Joint", "lf1_Joint", "rf0_Joint", "rf1_Joint"]),
                 "leg_joint_names": ["lf0_Joint", "lf1_Joint", "rf0_Joint", "rf1_Joint"],
-                "l1": 0.15,
-                "l2": 0.25,
-                "offset": 0.054,
+                "l1": 0.21665632675675972,
+                "l2": 0.2540023491164531,
+                "offset": -0.007712217793726145,
+                "theta1_offset": 0.14299916248023697,
+                "theta2_offset": 2.406020345452543,
             },
             clip=(-100.0, 100.0),
             scale=1.0,
@@ -272,9 +292,11 @@ class WLVMCObsCfg(ObservationsCfg):
                 "asset_cfg": SceneEntityCfg("robot", joint_names=["lf0_Joint", "lf1_Joint", "rf0_Joint", "rf1_Joint"]),
                 "leg_joint_names": ["lf0_Joint", "lf1_Joint", "rf0_Joint", "rf1_Joint"],
                 "wheel_joint_names": ["l_wheel_Joint", "r_wheel_Joint"],
-                "l1": 0.15,
-                "l2": 0.25,
-                "offset": 0.054,
+                "l1": 0.21665632675675972,
+                "l2": 0.2540023491164531,
+                "offset": -0.007712217793726145,
+                "theta1_offset": 0.14299916248023697,
+                "theta2_offset": 2.406020345452543,
             },
             clip=(-100.0, 100.0),
             scale=0.05,
@@ -284,9 +306,11 @@ class WLVMCObsCfg(ObservationsCfg):
             params={
                 "asset_cfg": SceneEntityCfg("robot", joint_names=["lf0_Joint", "lf1_Joint", "rf0_Joint", "rf1_Joint"]),
                 "leg_joint_names": ["lf0_Joint", "lf1_Joint", "rf0_Joint", "rf1_Joint"],
-                "l1": 0.15,
-                "l2": 0.25,
-                "offset": 0.054,
+                "l1": 0.21665632675675972,
+                "l2": 0.2540023491164531,
+                "offset": -0.007712217793726145,
+                "theta1_offset": 0.14299916248023697,
+                "theta2_offset": 2.406020345452543,
             },
             clip=(-100.0, 100.0),
             scale=5.0,
@@ -297,9 +321,11 @@ class WLVMCObsCfg(ObservationsCfg):
                 "asset_cfg": SceneEntityCfg("robot", joint_names=["lf0_Joint", "lf1_Joint", "rf0_Joint", "rf1_Joint"]),
                 "leg_joint_names": ["lf0_Joint", "lf1_Joint", "rf0_Joint", "rf1_Joint"],
                 "wheel_joint_names": ["l_wheel_Joint", "r_wheel_Joint"],
-                "l1": 0.15,
-                "l2": 0.25,
-                "offset": 0.054,
+                "l1": 0.21665632675675972,
+                "l2": 0.2540023491164531,
+                "offset": -0.007712217793726145,
+                "theta1_offset": 0.14299916248023697,
+                "theta2_offset": 2.406020345452543,
             },
             clip=(-100.0, 100.0),
             scale=0.25,
@@ -384,9 +410,11 @@ class WLVMCVanillaRewardsCfg(RewardsCfg):
         params={
             "asset_cfg": SceneEntityCfg("robot"),
             "leg_joint_names": ["lf0_Joint", "lf1_Joint", "rf0_Joint", "rf1_Joint"],
-            "l1": 0.15,
-            "l2": 0.25,
-            "offset": 0.054,
+            "l1": 0.21665632675675972,
+            "l2": 0.2540023491164531,
+            "offset": -0.007712217793726145,
+            "theta1_offset": 0.14299916248023697,
+            "theta2_offset": 2.406020345452543,
         },
     )
     leg_length_symmetry = RewTerm(
@@ -395,9 +423,11 @@ class WLVMCVanillaRewardsCfg(RewardsCfg):
         params={
             "asset_cfg": SceneEntityCfg("robot"),
             "leg_joint_names": ["lf0_Joint", "lf1_Joint", "rf0_Joint", "rf1_Joint"],
-            "l1": 0.15,
-            "l2": 0.25,
-            "offset": 0.054,
+            "l1": 0.21665632675675972,
+            "l2": 0.2540023491164531,
+            "offset": -0.007712217793726145,
+            "theta1_offset": 0.14299916248023697,
+            "theta2_offset": 2.406020345452543,
         },
     )
     vmc_action_symmetry = RewTerm(
@@ -473,11 +503,16 @@ class WLVMCVanillaRoughEnvCfg(LocomotionVelocityRoughEnvCfg):
         self.actions.vmc.l1 = self.vmc_actions.l1
         self.actions.vmc.l2 = self.vmc_actions.l2
         self.actions.vmc.offset = self.vmc_actions.offset
+        self.actions.vmc.theta1_offset = self.vmc_actions.theta1_offset
+        self.actions.vmc.theta2_offset = self.vmc_actions.theta2_offset
+        self.actions.vmc.theta0_offset = self.vmc_actions.theta0_offset
         self.actions.vmc.kp_theta = self.vmc_actions.kp_theta
         self.actions.vmc.kd_theta = self.vmc_actions.kd_theta
         self.actions.vmc.kp_l0 = self.vmc_actions.kp_l0
         self.actions.vmc.kd_l0 = self.vmc_actions.kd_l0
         self.actions.vmc.l0_offset = self.vmc_actions.l0_offset
+        self.actions.vmc.l0_min = self.vmc_actions.l0_min
+        self.actions.vmc.l0_max = self.vmc_actions.l0_max
         self.actions.vmc.feedforward_force = self.vmc_actions.feedforward_force
         self.actions.vmc.action_scale_theta = self.vmc_actions.action_scale_theta
         self.actions.vmc.action_scale_l0 = self.vmc_actions.action_scale_l0
@@ -524,7 +559,7 @@ class WLVMCVanillaRoughEnvCfg(LocomotionVelocityRoughEnvCfg):
         self.rewards.joint_acc_wheel_l2.weight = -2.5e-9
         self.rewards.joint_acc_wheel_l2.params["asset_cfg"].joint_names = self.wheel_joint_names
         self.rewards.joint_pos_limits.weight = -1.0
-        self.rewards.joint_pos_limits.params["asset_cfg"].joint_names = self.leg_joint_names
+        self.rewards.joint_pos_limits.params["asset_cfg"].joint_names = ["lf1_Joint", "rf1_Joint"]
         self.rewards.joint_vel_limits.weight = 0
         self.rewards.joint_power.weight = -2e-5
         self.rewards.joint_power.params["asset_cfg"].joint_names = self.leg_joint_names
@@ -631,11 +666,16 @@ def compute_vmc_torques_from_actions(env, actions: torch.Tensor) -> torch.Tensor
         l1=vmc_cfg.l1,
         l2=vmc_cfg.l2,
         offset=vmc_cfg.offset,
+        theta1_offset=vmc_cfg.theta1_offset,
+        theta2_offset=vmc_cfg.theta2_offset,
+        theta0_offset=vmc_cfg.theta0_offset,
         kp_theta=vmc_cfg.kp_theta,
         kd_theta=vmc_cfg.kd_theta,
         kp_l0=vmc_cfg.kp_l0,
         kd_l0=vmc_cfg.kd_l0,
         l0_offset=vmc_cfg.l0_offset,
+        l0_min=vmc_cfg.l0_min,
+        l0_max=vmc_cfg.l0_max,
         feedforward_force=vmc_cfg.feedforward_force,
         action_scale_theta=vmc_cfg.action_scale_theta,
         action_scale_l0=vmc_cfg.action_scale_l0,
