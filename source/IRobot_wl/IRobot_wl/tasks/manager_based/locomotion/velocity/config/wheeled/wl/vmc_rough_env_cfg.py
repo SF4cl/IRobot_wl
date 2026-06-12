@@ -639,11 +639,10 @@ class WLVMCVanillaRoughEnvCfg(LocomotionVelocityRoughEnvCfg):
         self.curriculum.command_levels_ang_vel = None
 
         # ------------------------------Commands------------------------------
-        # Straight-line forward only (no turning, single direction)
-        self.commands.base_velocity.ranges.lin_vel_x = (0.3, 0.6)
+        self.commands.base_velocity.ranges.lin_vel_x = (2.0, 2.3)
         self.commands.base_velocity.ranges.lin_vel_y = (0.0, 0.0)
-        self.commands.base_velocity.ranges.ang_vel_z = (0.0, 0.0)
-        self.commands.base_velocity.heading_command = False
+        self.commands.base_velocity.ranges.ang_vel_z = (-3.14, 3.14)
+        self.commands.base_velocity.heading_command = True
 
 
 def compute_vmc_torques_from_actions(env, actions: torch.Tensor) -> torch.Tensor:
