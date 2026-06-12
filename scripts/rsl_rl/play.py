@@ -250,6 +250,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     _wheel_joint_ids, _ = _robot.find_joints(
         ["l_wheel_Joint", "r_wheel_Joint"], preserve_order=True
     )
+    _leg_joint_ids = list(_leg_joint_ids)
+    _wheel_joint_ids = list(_wheel_joint_ids)
 
     def _fmt(tensor, precision=3):
         return "[" + ", ".join(f"{v:.{precision}f}" for v in tensor.detach().cpu().tolist()) + "]"
@@ -265,6 +267,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         commands = env.unwrapped.command_manager.get_command("base_velocity")
 
         wheel_vel = dof_vel[:, _wheel_joint_ids]
+        mirrored_wheel_vel = torch.stack([wheel_vel[:, 0], -wheel_vel[:, 1]], dim=1)
         wheel_torque = torques[:, _wheel_joint_ids]
         left_torque = torques[:, _leg_joint_ids[:2]]
         right_torque = torques[:, _leg_joint_ids[2:4]]
@@ -273,8 +276,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         vmc_cfg = env.unwrapped.cfg.vmc_actions
         vmc_state = compute_vmc_state(
             dof_pos=dof_pos, dof_vel=dof_vel,
-            leg_joint_indices=_leg_joint_ids.tolist(),
-            wheel_joint_indices=_wheel_joint_ids.tolist(),
+            leg_joint_indices=_leg_joint_ids,
+            wheel_joint_indices=_wheel_joint_ids,
             l1=vmc_cfg.l1, l2=vmc_cfg.l2, offset=vmc_cfg.offset,
             theta1_offset=vmc_cfg.theta1_offset,
             theta2_offset=vmc_cfg.theta2_offset,
@@ -295,7 +298,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         print(f"  L0         [L, R]:         {_fmt(vmc_state['L0'][0])}")
         print(f"  L0 ref     [L, R]:         {_fmt(l0_ref[0])}")
         print(f"  --- Wheels ---")
-        print(f"  wheel vel     [L, R]:      {_fmt(wheel_vel[0])}")
+        print(f"  joint wheel vel [L, R]:    {_fmt(wheel_vel[0])}")
+        print(f"  mirrored vel   [L, R]:    {_fmt(mirrored_wheel_vel[0])}")
         print(f"  wheel vel ref [L, R]:      {_fmt(wheel_vel_ref[0])}")
         print(f"  wheel torque  [L, R]:      {_fmt(wheel_torque[0])}")
         print(f"  --- Leg torques ---")
