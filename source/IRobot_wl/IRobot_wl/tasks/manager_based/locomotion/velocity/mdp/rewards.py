@@ -878,29 +878,96 @@ def dof_vel(
     return reward
 
 
-def action_smooth(
-    env: ManagerBasedRLEnv,
+def track_lin_vel_enhance(
+    env: ManagerBasedRLEnv, std: float, command_name: str, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")
 ) -> torch.Tensor:
-    """Second-order action smoothness penalty (WL-Gym style).
+    """Enhanced tracking of linear velocity commands (X-direction only).
 
-    Penalizes the rate of change of action rates, encouraging smoother
-    control signals.
+    Uses a sharper exponential kernel (sigma/10) for precise velocity tracking,
+    matching the original WL-Gym ``_reward_tracking_lin_vel_enhance``.
+
+    Args:
+        env: The RL environment.
+        std: Base tracking standard deviation. The enhance kernel uses std/10.
+        command_name: The name of the command term.
+        asset_cfg: The asset configuration.
 
     Returns:
         Reward value, shape (num_envs,).
     """
-    diff = torch.square(
-        env.action_manager.action
-        - 2 * env.action_manager.prev_action
-        + env.action_manager.prev_prev_action
-        if hasattr(env.action_manager, "prev_prev_action")
-        else env.action_manager.action - env.action_manager.prev_action
+    asset: RigidObject = env.scene[asset_cfg.name]
+    lin_vel_error = torch.square(env.command_manager.get_command(command_name)[:, 0] - asset.data.root_lin_vel_b[:, 0])
+    reward = torch.exp(-lin_vel_error / (std / 10)) - 1
+    reward *= torch.clamp(-env.scene["robot"].data.projected_gravity_b[:, 2], 0, 0.7) / 0.7
+    return reward
+
+
+def track_ang_vel_enhance(
+    env: ManagerBasedRLEnv, std: float, command_name: str, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")
+) -> torch.Tensor:
+    """Enhanced tracking of angular velocity commands (yaw only).
+
+    Uses a sharper exponential kernel (sigma/10) for precise yaw rate tracking,
+    matching the original WL-Gym ``_reward_tracking_ang_vel_enhance``.
+
+    Args:
+        env: The RL environment.
+        std: Base tracking standard deviation. The enhance kernel uses std/10.
+        command_name: The name of the command term.
+        asset_cfg: The asset configuration.
+
+    Returns:
+        Reward value, shape (num_envs,).
+    """
+    asset: RigidObject = env.scene[asset_cfg.name]
+    ang_vel_error = torch.square(env.command_manager.get_command(command_name)[:, 2] - asset.data.root_ang_vel_b[:, 2])
+    reward = torch.exp(-ang_vel_error / (std / 10)) - 1
+    reward *= torch.clamp(-env.scene["robot"].data.projected_gravity_b[:, 2], 0, 0.7) / 0.7
+    return reward
+
+
+def action_smooth(
+    env: ManagerBasedRLEnv,
+) -> torch.Tensor:
+    """Second-order action smoothness penalty for leg actions (WL-Gym style).
+
+    Penalizes the second derivative of leg actions (indices 0,1 for left leg
+    and 3,4 for right leg), matching the original WL-Gym
+    ``_reward_action_smooth``. Wheel velocity actions (indices 2, 5) are
+    excluded from this penalty.
+
+    Since Isaac Lab's ActionManager only tracks one step of previous actions,
+    this function manually maintains a ``prev_prev_action`` buffer via function
+    attributes.
+
+    Returns:
+        Reward value, shape (num_envs,).
+    """
+    actions = env.action_manager.action
+    prev = env.action_manager.prev_action
+
+    # Manually track prev_prev_action (Isaac Lab only keeps one step of history)
+    if not hasattr(action_smooth, "_prev_prev_buf"):
+        action_smooth._prev_prev_buf = {}
+    env_key = id(env)
+    if env_key not in action_smooth._prev_prev_buf:
+        action_smooth._prev_prev_buf[env_key] = torch.zeros_like(prev)
+    prev_prev = action_smooth._prev_prev_buf[env_key]
+
+    # Only apply to leg actions: indices [0,1] (left theta, L0) and [3,4] (right theta, L0)
+    diff = torch.sum(
+        torch.square(actions[:, :2] - 2 * prev[:, :2] + prev_prev[:, :2]), dim=1
+    ) + torch.sum(
+        torch.square(actions[:, 3:5] - 2 * prev[:, 3:5] + prev_prev[:, 3:5]), dim=1
     )
+
+    # Shift history: prev becomes prev_prev for next call
+    action_smooth._prev_prev_buf[env_key] = prev.clone()
+
     # Ignore first steps
-    if hasattr(env.action_manager, "prev_action") and env.action_manager.prev_action is not None:
-        mask = (env.action_manager.prev_action[:, :] != 0).float()
-        diff = diff * mask
-    return torch.sum(diff, dim=1)
+    mask = (prev[:, 0] != 0).float() * (prev_prev[:, 0] != 0).float()
+    diff = diff * mask
+    return diff
 
 
 def torque_limits(

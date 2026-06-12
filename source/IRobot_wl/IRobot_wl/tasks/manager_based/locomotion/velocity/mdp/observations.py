@@ -176,18 +176,22 @@ def wheel_joint_pos(
     env: ManagerBasedEnv,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
 ) -> torch.Tensor:
-    """Absolute wheel joint positions matching the original WL-Gym observation."""
+    """Mirrored wheel joint positions: positive means the same rolling direction for both wheels."""
     asset: Articulation = env.scene[asset_cfg.name]
-    return asset.data.joint_pos[:, asset_cfg.joint_ids]
+    wheel_pos = asset.data.joint_pos[:, asset_cfg.joint_ids].clone()
+    wheel_pos[:, 1] = -wheel_pos[:, 1]
+    return wheel_pos
 
 
 def wheel_joint_vel(
     env: ManagerBasedEnv,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
 ) -> torch.Tensor:
-    """Absolute wheel joint velocities matching the original WL-Gym observation."""
+    """Mirrored wheel joint velocities: positive means the same rolling direction for both wheels."""
     asset: Articulation = env.scene[asset_cfg.name]
-    return asset.data.joint_vel[:, asset_cfg.joint_ids]
+    wheel_vel = asset.data.joint_vel[:, asset_cfg.joint_ids].clone()
+    wheel_vel[:, 1] = -wheel_vel[:, 1]
+    return wheel_vel
 
 
 def previous_action(
@@ -223,13 +227,34 @@ def wl_vmc_commands(
     ang_vel_scale: float = 0.25,
     height_scale: float = 5.0,
 ) -> torch.Tensor:
-    """Old WL-Gym command observation layout: [lin_vel_x, ang_vel_yaw, base_height_cmd]."""
+    """WL-Gym command observation layout: [lin_vel_x, ang_vel_yaw, base_height_cmd].
+
+    Height commands are randomized in [0.1, 0.25] and resampled every 5 seconds,
+    matching the original WL-Gym behaviour.
+    """
     commands = env.command_manager.get_command(command_name)
+
+    # Height command with periodic resampling (matching WL-Gym resampling_time = 5s)
+    resample_every = int(5.0 / env.step_dt)
+    resample_mask = (env.episode_length_buf % resample_every) == 0
+
+    # Use function attribute to persist height buffer across calls
+    if not hasattr(wl_vmc_commands, "_height_buf"):
+        wl_vmc_commands._height_buf = {}  # keyed by id(env) to handle multiple envs
+    env_key = id(env)
+    if env_key not in wl_vmc_commands._height_buf:
+        wl_vmc_commands._height_buf[env_key] = (
+            0.1 + 0.15 * torch.rand(env.num_envs, device=env.device)
+        )
+
+    height_buf = wl_vmc_commands._height_buf[env_key]
+    height_buf[resample_mask] = 0.1 + 0.15 * torch.rand(int(resample_mask.sum()), device=env.device)
+
     obs = torch.stack(
         [
             commands[:, 0] * lin_vel_scale,
             commands[:, 2] * ang_vel_scale,
-            torch.full_like(commands[:, 0], height_command) * height_scale,
+            height_buf * height_scale,
         ],
         dim=1,
     )

@@ -72,7 +72,7 @@ class WLVMCVanillaActionsCfg:
     action_scale_vel: float = 10.0
 
     # Wheel control
-    wheel_damping: float = 0.5  # damping for wheel velocity PD [Nm*s/rad]
+    wheel_damping: float = 0.05  # damping for wheel velocity PD [Nm*s/rad]
 
     # Action clipping
     clip_actions: float = 100.0
@@ -142,9 +142,10 @@ class WLVMCControlActionsCfg:
         action_scale_theta=0.5,
         action_scale_l0=0.1,
         action_scale_vel=10.0,
-        wheel_damping=0.5,
+        wheel_damping=0.05,
         clip_actions=100.0,
-        torque_limits=[30.0, 30.0, 5.0, 30.0, 30.0, 5.0],
+        # Full articulation joint order is [lf0, rf0, lf1, rf1, l_wheel, r_wheel].
+        torque_limits=[30.0, 30.0, 30.0, 30.0, 4.0, 4.0],
     )
 
 
@@ -406,7 +407,7 @@ class WLVMCVanillaRewardsCfg(RewardsCfg):
     # VMC-specific rewards (added to base)
     nominal_state = RewTerm(
         func=mdp.nominal_state,
-        weight=-0.1,
+        weight=-0.3,
         params={
             "asset_cfg": SceneEntityCfg("robot"),
             "leg_joint_names": ["lf0_Joint", "lf1_Joint", "rf0_Joint", "rf1_Joint"],
@@ -419,7 +420,7 @@ class WLVMCVanillaRewardsCfg(RewardsCfg):
     )
     leg_length_symmetry = RewTerm(
         func=mdp.leg_length_symmetry,
-        weight=0.0,
+        weight=-4.0,
         params={
             "asset_cfg": SceneEntityCfg("robot"),
             "leg_joint_names": ["lf0_Joint", "lf1_Joint", "rf0_Joint", "rf1_Joint"],
@@ -432,7 +433,7 @@ class WLVMCVanillaRewardsCfg(RewardsCfg):
     )
     vmc_action_symmetry = RewTerm(
         func=mdp.vmc_action_symmetry,
-        weight=0.0,
+        weight=-0.25,
         params={"action_name": "vmc"},
     )
     base_height_enhance = RewTerm(
@@ -542,7 +543,7 @@ class WLVMCVanillaRoughEnvCfg(LocomotionVelocityRoughEnvCfg):
         self.rewards.base_height_l2.params["asset_cfg"].body_names = [self.base_link_name]
         self.rewards.base_height_enhance.weight = 1.0
         self.rewards.base_height_enhance.params["target_height"] = 0.25
-        self.rewards.nominal_state.weight = -0.1
+        self.rewards.nominal_state.weight = -0.3
         self.rewards.body_lin_acc_l2.weight = 0
 
         # Joint penalties (legs only for VMC)
@@ -582,6 +583,7 @@ class WLVMCVanillaRoughEnvCfg(LocomotionVelocityRoughEnvCfg):
 
         # Action penalties
         self.rewards.action_rate_l2.weight = -0.01
+        # self.rewards.action_smooth.weight = 0  # disabled, not in WLVMCVanillaRewardsCfg
 
         # Contact sensor
         self.rewards.undesired_contacts.weight = -1.0
@@ -592,6 +594,8 @@ class WLVMCVanillaRoughEnvCfg(LocomotionVelocityRoughEnvCfg):
         # Velocity-tracking rewards (WL-Gym style with std=0.25)
         self.rewards.track_lin_vel_xy_exp.weight = 1.0
         self.rewards.track_ang_vel_z_exp.weight = 1.0
+        # self.rewards.track_lin_vel_enhance.weight = 0  # not in current reward cfg
+        # self.rewards.track_ang_vel_enhance.weight = 0
 
         # Others
         self.rewards.feet_air_time.weight = 0
@@ -635,9 +639,11 @@ class WLVMCVanillaRoughEnvCfg(LocomotionVelocityRoughEnvCfg):
         self.curriculum.command_levels_ang_vel = None
 
         # ------------------------------Commands------------------------------
-        self.commands.base_velocity.ranges.lin_vel_x = (-1.0, 1.0)
+        # Straight-line forward only (no turning, single direction)
+        self.commands.base_velocity.ranges.lin_vel_x = (0.3, 0.6)
         self.commands.base_velocity.ranges.lin_vel_y = (0.0, 0.0)
-        self.commands.base_velocity.ranges.ang_vel_z = (-3.14, 3.14)
+        self.commands.base_velocity.ranges.ang_vel_z = (0.0, 0.0)
+        self.commands.base_velocity.heading_command = False
 
 
 def compute_vmc_torques_from_actions(env, actions: torch.Tensor) -> torch.Tensor:
@@ -656,13 +662,16 @@ def compute_vmc_torques_from_actions(env, actions: torch.Tensor) -> torch.Tensor
         Joint torques for all 6 DOFs, shape (num_envs, 6).
     """
     vmc_cfg = env.cfg.vmc_actions
+    robot = env.scene["robot"]
+    leg_joint_indices, _ = robot.find_joints(env.cfg.leg_joint_names, preserve_order=True)
+    wheel_joint_indices, _ = robot.find_joints(env.cfg.wheel_joint_names, preserve_order=True)
 
     return compute_vmc_action(
         actions=actions,
-        dof_pos=env.scene["robot"].data.joint_pos,
-        dof_vel=env.scene["robot"].data.joint_vel,
-        leg_joint_indices=[0, 1, 3, 4],  # lf0, lf1, rf0, rf1
-        wheel_joint_indices=[2, 5],  # l_wheel, r_wheel
+        dof_pos=robot.data.joint_pos,
+        dof_vel=robot.data.joint_vel,
+        leg_joint_indices=leg_joint_indices,
+        wheel_joint_indices=wheel_joint_indices,
         l1=vmc_cfg.l1,
         l2=vmc_cfg.l2,
         offset=vmc_cfg.offset,
@@ -681,5 +690,5 @@ def compute_vmc_torques_from_actions(env, actions: torch.Tensor) -> torch.Tensor
         action_scale_l0=vmc_cfg.action_scale_l0,
         action_scale_vel=vmc_cfg.action_scale_vel,
         wheel_damping=vmc_cfg.wheel_damping,
-        torque_limits=env.scene["robot"].data.torque_limit,
+        torque_limits=robot.data.torque_limit,
     )

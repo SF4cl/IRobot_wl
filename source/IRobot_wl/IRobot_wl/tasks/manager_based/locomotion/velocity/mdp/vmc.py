@@ -82,10 +82,10 @@ def compute_vmc_state(
     theta0_dot = (theta0_fwd - theta0) / dt
 
     wheel_pos = torch.stack(
-        [dof_pos[:, wheel_joint_indices[0]], dof_pos[:, wheel_joint_indices[1]]], dim=1
+        [dof_pos[:, wheel_joint_indices[0]], -dof_pos[:, wheel_joint_indices[1]]], dim=1
     )
     wheel_vel = torch.stack(
-        [dof_vel[:, wheel_joint_indices[0]], dof_vel[:, wheel_joint_indices[1]]], dim=1
+        [dof_vel[:, wheel_joint_indices[0]], -dof_vel[:, wheel_joint_indices[1]]], dim=1
     )
 
     return {
@@ -216,6 +216,7 @@ def compute_vmc_action(
     action_scale_vel: float,
     wheel_damping: float,
     torque_limits: torch.Tensor,
+    torque_scale: torch.Tensor | float = 1.0,
 ) -> torch.Tensor:
     """Compute joint torques from VMC task-space actions.
 
@@ -305,7 +306,10 @@ def compute_vmc_action(
 
     # Wheels
     torques[:, wheel_joint_indices[0]] = torque_wheel[:, 0]  # left wheel
-    torques[:, wheel_joint_indices[1]] = torque_wheel[:, 1]  # right wheel
+    torques[:, wheel_joint_indices[1]] = -torque_wheel[:, 1]  # right wheel mirror
+
+    # Apply motor torque scale (domain randomization, matching WL-Gym)
+    torques = torques * torque_scale
 
     # Clip to torque limits
     torques = torch.clamp(torques, -torque_limits, torque_limits)
@@ -314,7 +318,11 @@ def compute_vmc_action(
 
 
 class WLVMCAction(ActionTerm):
-    """Direct torque VMC action term matching the original Wheel-Legged-Gym semantics."""
+    """Direct torque VMC action term matching the original Wheel-Legged-Gym semantics.
+
+    Includes per-environment domain randomization of VMC PD gains, wheel damping,
+    and motor torque scale, matching the original WL-Gym's ``domain_rand`` config.
+    """
 
     cfg: "WLVMCActionCfg"
 
@@ -325,6 +333,31 @@ class WLVMCAction(ActionTerm):
 
         self._leg_joint_ids, _ = self._asset.find_joints(cfg.leg_joint_names, preserve_order=True)
         self._wheel_joint_ids, _ = self._asset.find_joints(cfg.wheel_joint_names, preserve_order=True)
+
+        # --- Domain randomization buffers (per environment, fixed at init) ---
+        self._kp_theta = torch.full((self.num_envs, 1), cfg.kp_theta, device=self.device)
+        self._kd_theta = torch.full((self.num_envs, 1), cfg.kd_theta, device=self.device)
+        self._kp_l0 = torch.full((self.num_envs, 1), cfg.kp_l0, device=self.device)
+        self._kd_l0 = torch.full((self.num_envs, 1), cfg.kd_l0, device=self.device)
+        self._wheel_damping = torch.full((self.num_envs, 1), cfg.wheel_damping, device=self.device)
+        self._torque_scale = torch.ones((self.num_envs, 6), device=self.device)
+
+        if cfg.randomize_vmc_gains:
+            self._randomize_gains()
+
+    def _randomize_gains(self):
+        """Randomize VMC PD gains, wheel damping, and motor torque scale per environment.
+
+        Matching original WL-Gym domain randomization ranges [0.9, 1.1].
+        """
+        low, high = self.cfg.gain_randomization_range
+        self._kp_theta[:] = self.cfg.kp_theta * (low + (high - low) * torch.rand(self.num_envs, 1, device=self.device))
+        self._kd_theta[:] = self.cfg.kd_theta * (low + (high - low) * torch.rand(self.num_envs, 1, device=self.device))
+        self._kp_l0[:] = self.cfg.kp_l0 * (low + (high - low) * torch.rand(self.num_envs, 1, device=self.device))
+        self._kd_l0[:] = self.cfg.kd_l0 * (low + (high - low) * torch.rand(self.num_envs, 1, device=self.device))
+        self._wheel_damping[:] = self.cfg.wheel_damping * (low + (high - low) * torch.rand(self.num_envs, 1, device=self.device))
+        self._torque_scale[:] = low + (high - low) * torch.rand(self.num_envs, 6, device=self.device)
+
     @property
     def action_dim(self) -> int:
         return 6
@@ -354,10 +387,10 @@ class WLVMCAction(ActionTerm):
             theta1_offset=self.cfg.theta1_offset,
             theta2_offset=self.cfg.theta2_offset,
             theta0_offset=self.cfg.theta0_offset,
-            kp_theta=self.cfg.kp_theta,
-            kd_theta=self.cfg.kd_theta,
-            kp_l0=self.cfg.kp_l0,
-            kd_l0=self.cfg.kd_l0,
+            kp_theta=self._kp_theta,
+            kd_theta=self._kd_theta,
+            kp_l0=self._kp_l0,
+            kd_l0=self._kd_l0,
             l0_offset=self.cfg.l0_offset,
             l0_min=self.cfg.l0_min,
             l0_max=self.cfg.l0_max,
@@ -365,8 +398,9 @@ class WLVMCAction(ActionTerm):
             action_scale_theta=self.cfg.action_scale_theta,
             action_scale_l0=self.cfg.action_scale_l0,
             action_scale_vel=self.cfg.action_scale_vel,
-            wheel_damping=self.cfg.wheel_damping,
+            wheel_damping=self._wheel_damping,
             torque_limits=self._asset.data.soft_joint_pos_limits.new_tensor(self.cfg.torque_limits),
+            torque_scale=self._torque_scale,
         )
         self._asset.set_joint_effort_target(torques)
 
@@ -377,7 +411,11 @@ class WLVMCAction(ActionTerm):
 
 @configclass
 class WLVMCActionCfg(ActionTermCfg):
-    """Configuration for the direct-torque WL VMC action term."""
+    """Configuration for the direct-torque WL VMC action term.
+
+    Includes domain randomization settings for VMC gains, matching the original
+    WL-Gym ``domain_rand`` config.
+    """
 
     class_type: type[ActionTerm] = WLVMCAction
 
@@ -400,9 +438,14 @@ class WLVMCActionCfg(ActionTermCfg):
     action_scale_theta: float = 0.5
     action_scale_l0: float = 0.1
     action_scale_vel: float = 10.0
-    wheel_damping: float = 0.5
+    wheel_damping: float = 0.05
     clip_actions: float = 100.0
-    torque_limits: list[float] = [30.0, 30.0, 5.0, 30.0, 30.0, 5.0]
+    # Full articulation joint order is [lf0, rf0, lf1, rf1, l_wheel, r_wheel].
+    torque_limits: list[float] = [30.0, 30.0, 30.0, 30.0, 4.0, 4.0]
+
+    # Domain randomization (matching original WL-Gym)
+    randomize_vmc_gains: bool = False
+    gain_randomization_range: tuple[float, float] = (0.9, 1.1)
 
 
 def convert_vmc_to_joint_actions(
@@ -477,7 +520,7 @@ def convert_vmc_to_joint_actions(
 
     # Assemble: [hip_l, knee_l, hip_r, knee_r, wheel_vel_l, wheel_vel_r]
     joint_actions = torch.cat(
-        [hip_l, knee_l, hip_r, knee_r, wheel_vel[:, 0:1], wheel_vel[:, 1:2]],
+        [hip_l, knee_l, hip_r, knee_r, wheel_vel[:, 0:1], -wheel_vel[:, 1:2]],
         dim=1,
     )
     return joint_actions

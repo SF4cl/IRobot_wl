@@ -64,9 +64,9 @@ WL_CFG = ArticulationCfg(
         ),
         "wheel": DCMotorCfg(
             joint_names_expr=["l_wheel_Joint", "r_wheel_Joint"],
-            effort_limit=5.0,
-            saturation_effort=5.0,
-            velocity_limit=20.0,
+            effort_limit=4.0,
+            saturation_effort=4.0,
+            velocity_limit=40.0,
             stiffness=0.0,
             damping=0.0,
             friction=0.0,

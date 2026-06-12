@@ -242,9 +242,74 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     dt = env.unwrapped.step_dt
 
+    # Debug printing helper
+    _robot = env.unwrapped.scene["robot"]
+    _leg_joint_ids, _ = _robot.find_joints(
+        ["lf0_Joint", "lf1_Joint", "rf0_Joint", "rf1_Joint"], preserve_order=True
+    )
+    _wheel_joint_ids, _ = _robot.find_joints(
+        ["l_wheel_Joint", "r_wheel_Joint"], preserve_order=True
+    )
+
+    def _fmt(tensor, precision=3):
+        return "[" + ", ".join(f"{v:.{precision}f}" for v in tensor.detach().cpu().tolist()) + "]"
+
+    def print_debug():
+        robot = _robot
+        actions = env.unwrapped.action_manager.action
+        torques = robot.data.applied_torque
+        dof_vel = robot.data.joint_vel
+        dof_pos = robot.data.joint_pos
+        base_lin_vel = robot.data.root_lin_vel_b
+        base_ang_vel = robot.data.root_ang_vel_b
+        commands = env.unwrapped.command_manager.get_command("base_velocity")
+
+        wheel_vel = dof_vel[:, _wheel_joint_ids]
+        wheel_torque = torques[:, _wheel_joint_ids]
+        left_torque = torques[:, _leg_joint_ids[:2]]
+        right_torque = torques[:, _leg_joint_ids[2:4]]
+
+        from IRobot_wl.tasks.manager_based.locomotion.velocity.mdp.vmc import compute_vmc_state
+        vmc_cfg = env.unwrapped.cfg.vmc_actions
+        vmc_state = compute_vmc_state(
+            dof_pos=dof_pos, dof_vel=dof_vel,
+            leg_joint_indices=_leg_joint_ids.tolist(),
+            wheel_joint_indices=_wheel_joint_ids.tolist(),
+            l1=vmc_cfg.l1, l2=vmc_cfg.l2, offset=vmc_cfg.offset,
+            theta1_offset=vmc_cfg.theta1_offset,
+            theta2_offset=vmc_cfg.theta2_offset,
+        )
+
+        theta0_ref = torch.stack([actions[:, 0], actions[:, 3]], dim=1) * vmc_cfg.action_scale_theta
+        l0_ref = torch.stack([actions[:, 1], actions[:, 4]], dim=1) * vmc_cfg.action_scale_l0 + vmc_cfg.l0_offset
+        wheel_vel_ref = torch.stack([actions[:, 2], actions[:, 5]], dim=1) * vmc_cfg.action_scale_vel
+
+        w = 60
+        print("#" * w)
+        print(f" Step debug (Env0)")
+        print(f"  Base lin vel [x,y,z]:      {_fmt(base_lin_vel[0])}")
+        print(f"  Commands   [x,yaw,head]:   {_fmt(commands[0])}")
+        print(f"  --- VMC task space ---")
+        print(f"  theta0     [L, R]:         {_fmt(vmc_state['theta0'][0])}")
+        print(f"  theta0 ref [L, R]:         {_fmt(theta0_ref[0])}")
+        print(f"  L0         [L, R]:         {_fmt(vmc_state['L0'][0])}")
+        print(f"  L0 ref     [L, R]:         {_fmt(l0_ref[0])}")
+        print(f"  --- Wheels ---")
+        print(f"  wheel vel     [L, R]:      {_fmt(wheel_vel[0])}")
+        print(f"  wheel vel ref [L, R]:      {_fmt(wheel_vel_ref[0])}")
+        print(f"  wheel torque  [L, R]:      {_fmt(wheel_torque[0])}")
+        print(f"  --- Leg torques ---")
+        print(f"  left  [hip, knee]:         {_fmt(left_torque[0])}")
+        print(f"  right [hip, knee]:         {_fmt(right_torque[0])}")
+        print(f"  --- Actions (raw) ---")
+        print(f"  left  [theta, L0, wheel]:  {_fmt(actions[0, :3])}")
+        print(f"  right [theta, L0, wheel]:  {_fmt(actions[0, 3:6])}")
+        print("#" * w)
+
     # reset environment
     obs = env.get_observations()
     timestep = 0
+    debug_print_every = int(1.0 / dt)  # print every 1 second (sim time)
     # simulate environment
     while simulation_app.is_running():
         start_time = time.time()
@@ -261,8 +326,13 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                 policy.reset(dones)
             else:
                 policy_nn.reset(dones)
+
+        # periodic debug print
+        if timestep % debug_print_every == 0:
+            print_debug()
+
+        timestep += 1
         if args_cli.video:
-            timestep += 1
             # Exit the play loop after recording one video
             if timestep == args_cli.video_length:
                 break

@@ -111,12 +111,40 @@ class WlSequenceRunner:
     def _leg_debug_stats(self) -> dict[str, torch.Tensor]:
         actions = self.env.unwrapped.action_manager.action
         torques = self._robot.data.applied_torque
+        dof_vel = self._robot.data.joint_vel
+        dof_pos = self._robot.data.joint_pos
 
         left_action = actions[:, :3]
         right_action = actions[:, 3:6]
         left_leg_torque = torques[:, self._leg_joint_ids[:2]]
         right_leg_torque = torques[:, self._leg_joint_ids[2:4]]
         wheel_torque = torques[:, self._wheel_joint_ids]
+        wheel_vel = dof_vel[:, self._wheel_joint_ids]
+
+        # Base velocity (in body frame) vs command
+        base_lin_vel = self._robot.data.root_lin_vel_b
+        base_ang_vel = self._robot.data.root_ang_vel_b
+        commands = self.env.unwrapped.command_manager.get_command("base_velocity")
+
+        # VMC task-space state
+        from IRobot_wl.tasks.manager_based.locomotion.velocity.mdp.vmc import compute_vmc_state
+        vmc_cfg = self.env.unwrapped.cfg.vmc_actions
+        vmc_state = compute_vmc_state(
+            dof_pos=dof_pos,
+            dof_vel=dof_vel,
+            leg_joint_indices=list(self._leg_joint_ids),
+            wheel_joint_indices=list(self._wheel_joint_ids),
+            l1=vmc_cfg.l1,
+            l2=vmc_cfg.l2,
+            offset=vmc_cfg.offset,
+            theta1_offset=vmc_cfg.theta1_offset,
+            theta2_offset=vmc_cfg.theta2_offset,
+        )
+
+        # Task-space reference from actions
+        theta0_ref = torch.stack([actions[:, 0], actions[:, 3]], dim=1) * vmc_cfg.action_scale_theta + vmc_cfg.theta0_offset
+        l0_ref = torch.stack([actions[:, 1], actions[:, 4]], dim=1) * vmc_cfg.action_scale_l0 + vmc_cfg.l0_offset
+        wheel_vel_ref = torch.stack([actions[:, 2], actions[:, 5]], dim=1) * vmc_cfg.action_scale_vel
 
         return {
             "left_action_mean_abs": left_action.abs().mean(dim=0),
@@ -124,11 +152,29 @@ class WlSequenceRunner:
             "left_torque_mean_abs": left_leg_torque.abs().mean(dim=0),
             "right_torque_mean_abs": right_leg_torque.abs().mean(dim=0),
             "wheel_torque_mean_abs": wheel_torque.abs().mean(dim=0),
+            "wheel_vel_mean_abs": wheel_vel.abs().mean(dim=0),
             "left_action_env0": left_action[0],
             "right_action_env0": right_action[0],
             "left_torque_env0": left_leg_torque[0],
             "right_torque_env0": right_leg_torque[0],
             "wheel_torque_env0": wheel_torque[0],
+            "wheel_vel_env0": wheel_vel[0],
+            "base_lin_vel_mean": base_lin_vel.mean(dim=0),
+            "base_ang_vel_mean": base_ang_vel.mean(dim=0),
+            "commands_mean": commands.mean(dim=0),
+            "base_lin_vel_env0": base_lin_vel[0],
+            "commands_env0": commands[0],
+            "theta0_mean": vmc_state["theta0"].mean(dim=0),
+            "theta0_ref_mean": theta0_ref.mean(dim=0),
+            "L0_mean": vmc_state["L0"].mean(dim=0),
+            "L0_ref_mean": l0_ref.mean(dim=0),
+            "wheel_vel_ref_mean": wheel_vel_ref.abs().mean(dim=0),
+            "theta0_env0": vmc_state["theta0"][0],
+            "theta0_ref_env0": theta0_ref[0],
+            "L0_env0": vmc_state["L0"][0],
+            "L0_ref_env0": l0_ref[0],
+            "wheel_vel_env0": wheel_vel[0],
+            "wheel_vel_ref_env0": wheel_vel_ref[0],
         }
 
     def learn(self, num_learning_iterations, init_at_random_ep_len=False):
@@ -259,8 +305,23 @@ class WlSequenceRunner:
         print(f"{'Right leg torque |mean abs| [hip, knee]:':>34} {self._format_tensor(leg_stats['right_torque_mean_abs'])}")
         print(f"{'Env0 left leg torque [hip, knee]:':>34} {self._format_tensor(leg_stats['left_torque_env0'])}")
         print(f"{'Env0 right leg torque [hip, knee]:':>34} {self._format_tensor(leg_stats['right_torque_env0'])}")
-        print(f"{'Wheel torque |mean abs| [left, right]:':>34} {self._format_tensor(leg_stats['wheel_torque_mean_abs'])}")
-        print(f"{'Env0 wheel torque [left, right]:':>34} {self._format_tensor(leg_stats['wheel_torque_env0'])}")
+        print(f"{'Wheel torque |mean abs| [L, R]:':>34} {self._format_tensor(leg_stats['wheel_torque_mean_abs'])}")
+        print(f"{'Env0 wheel torque [L, R]:':>34} {self._format_tensor(leg_stats['wheel_torque_env0'])}")
+        print(f"{'Wheel vel |mean abs| [L, R]:':>34} {self._format_tensor(leg_stats['wheel_vel_mean_abs'])}")
+        print(f"{'Env0 wheel vel [L, R]:':>34} {self._format_tensor(leg_stats['wheel_vel_env0'])}")
+        print(f"{'Env0 wheel vel ref [L, R]:':>34} {self._format_tensor(leg_stats['wheel_vel_ref_env0'])}")
+        print(f"{'theta0 |mean| [L, R]:':>34} {self._format_tensor(leg_stats['theta0_mean'])}")
+        print(f"{'theta0 ref |mean| [L, R]:':>34} {self._format_tensor(leg_stats['theta0_ref_mean'])}")
+        print(f"{'L0 |mean| [L, R]:':>34} {self._format_tensor(leg_stats['L0_mean'])}")
+        print(f"{'L0 ref |mean| [L, R]:':>34} {self._format_tensor(leg_stats['L0_ref_mean'])}")
+        print(f"{'Env0 theta0 [L, R]:':>34} {self._format_tensor(leg_stats['theta0_env0'])}")
+        print(f"{'Env0 theta0 ref [L, R]:':>34} {self._format_tensor(leg_stats['theta0_ref_env0'])}")
+        print(f"{'Env0 L0 [L, R]:':>34} {self._format_tensor(leg_stats['L0_env0'])}")
+        print(f"{'Env0 L0 ref [L, R]:':>34} {self._format_tensor(leg_stats['L0_ref_env0'])}")
+        print(f"{'Base lin vel |mean| [x,y,z]:':>34} {self._format_tensor(leg_stats['base_lin_vel_mean'])}")
+        print(f"{'Commands |mean| [x,ang,head]:':>34} {self._format_tensor(leg_stats['commands_mean'])}")
+        print(f"{'Env0 base lin vel [x,y,z]:':>34} {self._format_tensor(leg_stats['base_lin_vel_env0'])}")
+        print(f"{'Env0 commands [x,ang,head]:':>34} {self._format_tensor(leg_stats['commands_env0'])}")
         print("#" * width)
 
     def save(self, path, infos=None):
