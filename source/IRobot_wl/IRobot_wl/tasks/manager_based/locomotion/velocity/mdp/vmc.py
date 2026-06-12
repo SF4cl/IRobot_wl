@@ -81,11 +81,12 @@ def compute_vmc_state(
     L0_dot = (L0_fwd - L0) / dt
     theta0_dot = (theta0_fwd - theta0) / dt
 
+    # Forward-positive wheel convention: positive wheel state drives body +X.
     wheel_pos = torch.stack(
-        [dof_pos[:, wheel_joint_indices[0]], -dof_pos[:, wheel_joint_indices[1]]], dim=1
+        [-dof_pos[:, wheel_joint_indices[0]], dof_pos[:, wheel_joint_indices[1]]], dim=1
     )
     wheel_vel = torch.stack(
-        [dof_vel[:, wheel_joint_indices[0]], -dof_vel[:, wheel_joint_indices[1]]], dim=1
+        [-dof_vel[:, wheel_joint_indices[0]], dof_vel[:, wheel_joint_indices[1]]], dim=1
     )
 
     return {
@@ -304,9 +305,9 @@ def compute_vmc_action(
     torques[:, leg_joint_indices[2]] = -T1[:, 1]  # right hip
     torques[:, leg_joint_indices[3]] = -T2[:, 1]  # right knee
 
-    # Wheels
-    torques[:, wheel_joint_indices[0]] = torque_wheel[:, 0]  # left wheel
-    torques[:, wheel_joint_indices[1]] = -torque_wheel[:, 1]  # right wheel mirror
+    # Wheels: map forward-positive task torques back to physical joint axes.
+    torques[:, wheel_joint_indices[0]] = -torque_wheel[:, 0]  # left wheel
+    torques[:, wheel_joint_indices[1]] = torque_wheel[:, 1]  # right wheel
 
     # Apply motor torque scale (domain randomization, matching WL-Gym)
     torques = torques * torque_scale
@@ -330,6 +331,9 @@ class WLVMCAction(ActionTerm):
         super().__init__(cfg, env)
         self._raw_actions = torch.zeros(self.num_envs, self.action_dim, device=self.device)
         self._processed_actions = torch.zeros_like(self._raw_actions)
+        self._delayed_actions = torch.zeros_like(self._raw_actions)
+        self._previous_actions = torch.zeros_like(self._raw_actions)
+        self._previous_previous_actions = torch.zeros_like(self._raw_actions)
 
         self._leg_joint_ids, _ = self._asset.find_joints(cfg.leg_joint_names, preserve_order=True)
         self._wheel_joint_ids, _ = self._asset.find_joints(cfg.wheel_joint_names, preserve_order=True)
@@ -344,6 +348,15 @@ class WLVMCAction(ActionTerm):
 
         if cfg.randomize_vmc_gains:
             self._randomize_gains()
+
+        physics_dt = getattr(env, "physics_dt", env.step_dt / env.cfg.decimation)
+        delay_min_ms, delay_max_ms = cfg.action_delay_ms_range
+        self._action_delay_min_steps = max(0, int(round(delay_min_ms * 0.001 / physics_dt)))
+        self._action_delay_max_steps = max(self._action_delay_min_steps, int(round(delay_max_ms * 0.001 / physics_dt)))
+        fifo_len = self._action_delay_max_steps + 1
+        self._action_fifo = torch.zeros(self.num_envs, fifo_len, self.action_dim, device=self.device)
+        self._action_delay_idx = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
+        self._randomize_action_delay()
 
     def _randomize_gains(self):
         """Randomize VMC PD gains, wheel damping, and motor torque scale per environment.
@@ -370,13 +383,43 @@ class WLVMCAction(ActionTerm):
     def processed_actions(self) -> torch.Tensor:
         return self._processed_actions
 
+    @property
+    def previous_actions(self) -> torch.Tensor:
+        return self._previous_actions
+
+    @property
+    def previous_previous_actions(self) -> torch.Tensor:
+        return self._previous_previous_actions
+
+    def _randomize_action_delay(self, env_ids=None):
+        if env_ids is None:
+            env_ids = slice(None)
+            count = self.num_envs
+        else:
+            count = len(env_ids)
+        if self.cfg.randomize_action_delay:
+            self._action_delay_idx[env_ids] = torch.randint(
+                self._action_delay_min_steps,
+                self._action_delay_max_steps + 1,
+                (count,),
+                device=self.device,
+            )
+        else:
+            self._action_delay_idx[env_ids] = 0
+
     def process_actions(self, actions: torch.Tensor):
+        self._previous_previous_actions[:] = self._previous_actions
+        self._previous_actions[:] = self._processed_actions
         self._raw_actions[:] = torch.clamp(actions, -self.cfg.clip_actions, self.cfg.clip_actions)
         self._processed_actions[:] = self._raw_actions
 
     def apply_actions(self):
+        self._action_fifo[:, 1:, :] = self._action_fifo[:, :-1, :].clone()
+        self._action_fifo[:, 0, :] = self._processed_actions
+        self._delayed_actions[:] = self._action_fifo[torch.arange(self.num_envs, device=self.device), self._action_delay_idx]
+
         torques = compute_vmc_action(
-            actions=self._processed_actions,
+            actions=self._delayed_actions,
             dof_pos=self._asset.data.joint_pos,
             dof_vel=self._asset.data.joint_vel,
             leg_joint_indices=self._leg_joint_ids,
@@ -405,8 +448,15 @@ class WLVMCAction(ActionTerm):
         self._asset.set_joint_effort_target(torques)
 
     def reset(self, env_ids=None) -> None:
+        if env_ids is None:
+            env_ids = slice(None)
         self._raw_actions[env_ids] = 0.0
         self._processed_actions[env_ids] = 0.0
+        self._delayed_actions[env_ids] = 0.0
+        self._previous_actions[env_ids] = 0.0
+        self._previous_previous_actions[env_ids] = 0.0
+        self._action_fifo[env_ids] = 0.0
+        self._randomize_action_delay(env_ids)
 
 
 @configclass
@@ -446,6 +496,8 @@ class WLVMCActionCfg(ActionTermCfg):
     # Domain randomization (matching original WL-Gym)
     randomize_vmc_gains: bool = False
     gain_randomization_range: tuple[float, float] = (0.9, 1.1)
+    randomize_action_delay: bool = True
+    action_delay_ms_range: tuple[float, float] = (0.0, 10.0)
 
 
 def convert_vmc_to_joint_actions(
@@ -497,7 +549,7 @@ def convert_vmc_to_joint_actions(
     L0 = L0 * action_scale_l0 + l0_offset
     L0 = torch.clamp(L0, min=l0_min, max=l0_max)
 
-    wheel_vel = torch.stack([actions[:, 2], actions[:, 5]], dim=1)  # (num_envs, 2)
+    wheel_vel = torch.stack([actions[:, 2], actions[:, 5]], dim=1)  # forward-positive, (num_envs, 2)
     wheel_vel = wheel_vel * action_scale_vel
 
     # IK: task-space → mirrored leg-frame joint angles used by the original
@@ -518,9 +570,11 @@ def convert_vmc_to_joint_actions(
     hip_r = -(theta1[:, 1:2] - theta1_offset)
     knee_r = theta2_offset - theta2[:, 1:2]
 
-    # Assemble: [hip_l, knee_l, hip_r, knee_r, wheel_vel_l, wheel_vel_r]
+    # Assemble: [hip_l, knee_l, hip_r, knee_r, wheel_vel_l, wheel_vel_r].
+    # Wheel actions are forward-positive, while the physical joint axes use the
+    # opposite sign on the left wheel and the same sign on the right wheel.
     joint_actions = torch.cat(
-        [hip_l, knee_l, hip_r, knee_r, wheel_vel[:, 0:1], -wheel_vel[:, 1:2]],
+        [hip_l, knee_l, hip_r, knee_r, -wheel_vel[:, 0:1], wheel_vel[:, 1:2]],
         dim=1,
     )
     return joint_actions

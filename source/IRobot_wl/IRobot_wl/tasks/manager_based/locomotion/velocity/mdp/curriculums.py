@@ -20,6 +20,8 @@ def command_levels_lin_vel(
     env_ids: Sequence[int],
     reward_term_name: str,
     range_multiplier: Sequence[float] = (0.1, 1.0),
+    threshold: float = 0.8,
+    step_size: float = 0.1,
 ) -> None:
     """command_levels_lin_vel"""
     base_velocity_ranges = env.command_manager.get_term("base_velocity").cfg.ranges
@@ -40,16 +42,17 @@ def command_levels_lin_vel(
     if env.common_step_counter % env.max_episode_length == 0:
         episode_sums = env.reward_manager._episode_sums[reward_term_name]
         reward_term_cfg = env.reward_manager.get_term_cfg(reward_term_name)
-        delta_command = torch.tensor([-0.1, 0.1], device=env.device)
+        vel_x = torch.tensor(base_velocity_ranges.lin_vel_x, device=env.device)
+        vel_y = torch.tensor(base_velocity_ranges.lin_vel_y, device=env.device)
 
-        # If the tracking reward is above 80% of the maximum, increase the range of commands
-        if torch.mean(episode_sums[env_ids]) / env.max_episode_length_s > 0.8 * reward_term_cfg.weight:
-            new_vel_x = torch.tensor(base_velocity_ranges.lin_vel_x, device=env.device) + delta_command
-            new_vel_y = torch.tensor(base_velocity_ranges.lin_vel_y, device=env.device) + delta_command
+        # If the tracking reward is above the configured threshold, increase the command range.
+        if torch.mean(episode_sums[env_ids]) / env.max_episode_length_s > threshold * reward_term_cfg.weight:
+            new_vel_x = vel_x + torch.sign(env._final_vel_x - vel_x) * step_size
+            new_vel_y = vel_y + torch.sign(env._final_vel_y - vel_y) * step_size
 
             # Clamp to ensure we don't exceed final ranges
-            new_vel_x = torch.clamp(new_vel_x, min=env._final_vel_x[0], max=env._final_vel_x[1])
-            new_vel_y = torch.clamp(new_vel_y, min=env._final_vel_y[0], max=env._final_vel_y[1])
+            new_vel_x = torch.minimum(torch.maximum(new_vel_x, torch.minimum(vel_x, env._final_vel_x)), torch.maximum(vel_x, env._final_vel_x))
+            new_vel_y = torch.minimum(torch.maximum(new_vel_y, torch.minimum(vel_y, env._final_vel_y)), torch.maximum(vel_y, env._final_vel_y))
 
             # Update ranges
             base_velocity_ranges.lin_vel_x = new_vel_x.tolist()
@@ -63,6 +66,8 @@ def command_levels_ang_vel(
     env_ids: Sequence[int],
     reward_term_name: str,
     range_multiplier: Sequence[float] = (0.1, 1.0),
+    threshold: float = 0.8,
+    step_size: float = 0.1,
 ) -> None:
     """command_levels_ang_vel"""
     base_velocity_ranges = env.command_manager.get_term("base_velocity").cfg.ranges
@@ -79,14 +84,17 @@ def command_levels_ang_vel(
     if env.common_step_counter % env.max_episode_length == 0:
         episode_sums = env.reward_manager._episode_sums[reward_term_name]
         reward_term_cfg = env.reward_manager.get_term_cfg(reward_term_name)
-        delta_command = torch.tensor([-0.1, 0.1], device=env.device)
+        ang_vel_z = torch.tensor(base_velocity_ranges.ang_vel_z, device=env.device)
 
-        # If the tracking reward is above 80% of the maximum, increase the range of commands
-        if torch.mean(episode_sums[env_ids]) / env.max_episode_length_s > 0.8 * reward_term_cfg.weight:
-            new_ang_vel_z = torch.tensor(base_velocity_ranges.ang_vel_z, device=env.device) + delta_command
+        # If the tracking reward is above the configured threshold, increase the command range.
+        if torch.mean(episode_sums[env_ids]) / env.max_episode_length_s > threshold * reward_term_cfg.weight:
+            new_ang_vel_z = ang_vel_z + torch.sign(env._final_ang_vel_z - ang_vel_z) * step_size
 
             # Clamp to ensure we don't exceed final ranges
-            new_ang_vel_z = torch.clamp(new_ang_vel_z, min=env._final_ang_vel_z[0], max=env._final_ang_vel_z[1])
+            new_ang_vel_z = torch.minimum(
+                torch.maximum(new_ang_vel_z, torch.minimum(ang_vel_z, env._final_ang_vel_z)),
+                torch.maximum(ang_vel_z, env._final_ang_vel_z),
+            )
 
             # Update ranges
             base_velocity_ranges.ang_vel_z = new_ang_vel_z.tolist()

@@ -267,7 +267,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         commands = env.unwrapped.command_manager.get_command("base_velocity")
 
         wheel_vel = dof_vel[:, _wheel_joint_ids]
-        mirrored_wheel_vel = torch.stack([wheel_vel[:, 0], -wheel_vel[:, 1]], dim=1)
+        forward_wheel_vel = torch.stack([-wheel_vel[:, 0], wheel_vel[:, 1]], dim=1)
         wheel_torque = torques[:, _wheel_joint_ids]
         left_torque = torques[:, _leg_joint_ids[:2]]
         right_torque = torques[:, _leg_joint_ids[2:4]]
@@ -299,7 +299,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         print(f"  L0 ref     [L, R]:         {_fmt(l0_ref[0])}")
         print(f"  --- Wheels ---")
         print(f"  joint wheel vel [L, R]:    {_fmt(wheel_vel[0])}")
-        print(f"  mirrored vel   [L, R]:    {_fmt(mirrored_wheel_vel[0])}")
+        print(f"  forward vel    [L, R]:    {_fmt(forward_wheel_vel[0])}")
         print(f"  wheel vel ref [L, R]:      {_fmt(wheel_vel_ref[0])}")
         print(f"  wheel torque  [L, R]:      {_fmt(wheel_torque[0])}")
         print(f"  --- Leg torques ---")

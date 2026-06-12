@@ -146,6 +146,8 @@ class WLVMCControlActionsCfg:
         clip_actions=100.0,
         # Full articulation joint order is [lf0, rf0, lf1, rf1, l_wheel, r_wheel].
         torque_limits=[30.0, 30.0, 30.0, 30.0, 4.0, 4.0],
+        randomize_action_delay=True,
+        action_delay_ms_range=(0.0, 10.0),
     )
 
 
@@ -345,6 +347,12 @@ class WLVMCObsCfg(ObservationsCfg):
         )
         actions = ObsTerm(func=mdp.last_action, params={"action_name": "vmc"}, clip=(-100.0, 100.0), scale=1.0)
         prev_actions = ObsTerm(func=mdp.previous_action, params={"action_name": "vmc"}, clip=(-100.0, 100.0), scale=1.0)
+        prev_prev_actions = ObsTerm(
+            func=mdp.previous_previous_action,
+            params={"action_name": "vmc"},
+            clip=(-100.0, 100.0),
+            scale=1.0,
+        )
         joint_acc = ObsTerm(
             func=mdp.joint_acc,
             params={
@@ -384,6 +392,52 @@ class WLVMCObsCfg(ObservationsCfg):
             params={"sensor_cfg": SceneEntityCfg("height_scanner"), "offset": 0.5},
             clip=(-100.0, 100.0),
             scale=5.0,
+        )
+        applied_torque = ObsTerm(
+            func=mdp.applied_joint_torque,
+            params={
+                "asset_cfg": SceneEntityCfg(
+                    "robot",
+                    joint_names=["lf0_Joint", "lf1_Joint", "rf0_Joint", "rf1_Joint", "l_wheel_Joint", "r_wheel_Joint"],
+                )
+            },
+            clip=(-100.0, 100.0),
+            scale=0.05,
+        )
+        base_mass_delta = ObsTerm(
+            func=mdp.body_mass_delta,
+            params={"asset_cfg": SceneEntityCfg("robot", body_names=["base_link"])},
+            clip=(-100.0, 100.0),
+            scale=1.0,
+        )
+        base_com = ObsTerm(
+            func=mdp.body_com_pos,
+            params={"asset_cfg": SceneEntityCfg("robot", body_names=["base_link"])},
+            clip=(-100.0, 100.0),
+            scale=1.0,
+        )
+        default_joint_pos_delta = ObsTerm(
+            func=mdp.default_joint_pos_delta,
+            params={
+                "asset_cfg": SceneEntityCfg(
+                    "robot",
+                    joint_names=["lf0_Joint", "lf1_Joint", "rf0_Joint", "rf1_Joint", "l_wheel_Joint", "r_wheel_Joint"],
+                )
+            },
+            clip=(-100.0, 100.0),
+            scale=1.0,
+        )
+        friction = ObsTerm(
+            func=mdp.material_static_friction,
+            params={"asset_cfg": SceneEntityCfg("robot", body_names=".*")},
+            clip=(-100.0, 100.0),
+            scale=1.0,
+        )
+        restitution = ObsTerm(
+            func=mdp.material_restitution,
+            params={"asset_cfg": SceneEntityCfg("robot", body_names=".*")},
+            clip=(-100.0, 100.0),
+            scale=1.0,
         )
 
         def __post_init__(self):
@@ -520,6 +574,8 @@ class WLVMCVanillaRoughEnvCfg(LocomotionVelocityRoughEnvCfg):
         self.actions.vmc.action_scale_vel = self.vmc_actions.action_scale_vel
         self.actions.vmc.wheel_damping = self.vmc_actions.wheel_damping
         self.actions.vmc.clip_actions = self.vmc_actions.clip_actions
+        self.actions.vmc.randomize_action_delay = True
+        self.actions.vmc.action_delay_ms_range = (0.0, 10.0)
 
         # ------------------------------Events------------------------------
         self.events.randomize_rigid_body_mass_base.params["asset_cfg"].body_names = [self.base_link_name]
@@ -594,8 +650,8 @@ class WLVMCVanillaRoughEnvCfg(LocomotionVelocityRoughEnvCfg):
         # Velocity-tracking rewards (WL-Gym style with std=0.25)
         self.rewards.track_lin_vel_xy_exp.weight = 1.0
         self.rewards.track_ang_vel_z_exp.weight = 1.0
-        # self.rewards.track_lin_vel_enhance.weight = 0  # not in current reward cfg
-        # self.rewards.track_ang_vel_enhance.weight = 0
+        self.rewards.tracking_lin_vel_enhance.weight = 1.0
+        self.rewards.tracking_ang_vel_enhance.weight = 1.0
 
         # Others
         self.rewards.feet_air_time.weight = 0
@@ -635,10 +691,13 @@ class WLVMCVanillaRoughEnvCfg(LocomotionVelocityRoughEnvCfg):
         ]
 
         # ------------------------------Curriculums------------------------------
-        self.curriculum.command_levels_lin_vel = None
-        self.curriculum.command_levels_ang_vel = None
+        self.curriculum.command_levels_lin_vel.params["reward_term_name"] = "track_lin_vel_xy_exp"
+        self.curriculum.command_levels_lin_vel.params["threshold"] = 0.7
+        self.curriculum.command_levels_ang_vel.params["reward_term_name"] = "track_ang_vel_z_exp"
+        self.curriculum.command_levels_ang_vel.params["threshold"] = 0.7
 
         # ------------------------------Commands------------------------------
+        self.commands.base_velocity.resampling_time_range = (5.0, 5.0)
         self.commands.base_velocity.ranges.lin_vel_x = (2.0, 2.3)
         self.commands.base_velocity.ranges.lin_vel_y = (0.0, 0.0)
         self.commands.base_velocity.ranges.ang_vel_z = (-3.14, 3.14)

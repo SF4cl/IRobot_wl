@@ -120,6 +120,7 @@ class WlSequenceRunner:
         right_leg_torque = torques[:, self._leg_joint_ids[2:4]]
         wheel_torque = torques[:, self._wheel_joint_ids]
         wheel_vel = dof_vel[:, self._wheel_joint_ids]
+        forward_wheel_vel = torch.stack([-wheel_vel[:, 0], wheel_vel[:, 1]], dim=1)
 
         # Base velocity (in body frame) vs command
         base_lin_vel = self._robot.data.root_lin_vel_b
@@ -152,13 +153,13 @@ class WlSequenceRunner:
             "left_torque_mean_abs": left_leg_torque.abs().mean(dim=0),
             "right_torque_mean_abs": right_leg_torque.abs().mean(dim=0),
             "wheel_torque_mean_abs": wheel_torque.abs().mean(dim=0),
-            "wheel_vel_mean_abs": wheel_vel.abs().mean(dim=0),
+            "wheel_vel_mean_abs": forward_wheel_vel.abs().mean(dim=0),
             "left_action_env0": left_action[0],
             "right_action_env0": right_action[0],
             "left_torque_env0": left_leg_torque[0],
             "right_torque_env0": right_leg_torque[0],
             "wheel_torque_env0": wheel_torque[0],
-            "wheel_vel_env0": wheel_vel[0],
+            "wheel_vel_env0": forward_wheel_vel[0],
             "base_lin_vel_mean": base_lin_vel.mean(dim=0),
             "base_ang_vel_mean": base_ang_vel.mean(dim=0),
             "commands_mean": commands.mean(dim=0),

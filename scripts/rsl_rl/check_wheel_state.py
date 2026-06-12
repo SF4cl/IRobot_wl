@@ -207,19 +207,19 @@ def _print_wheel_state(env, action: torch.Tensor, step: int, phase: str) -> None
     wheel_vel_ref = wheel_action * cfg.action_scale_vel
     joint_pos = robot.data.joint_pos[:, wheel_joint_ids]
     joint_vel = robot.data.joint_vel[:, wheel_joint_ids]
-    mirrored_joint_pos = torch.stack([joint_pos[:, 0], -joint_pos[:, 1]], dim=1)
-    mirrored_joint_vel = torch.stack([joint_vel[:, 0], -joint_vel[:, 1]], dim=1)
+    forward_joint_pos = torch.stack([-joint_pos[:, 0], joint_pos[:, 1]], dim=1)
+    forward_joint_vel = torch.stack([-joint_vel[:, 0], joint_vel[:, 1]], dim=1)
     effort_target = robot.data.joint_effort_target[:, wheel_joint_ids]
     computed_torque = robot.data.computed_torque[:, wheel_joint_ids]
     applied_torque = robot.data.applied_torque[:, wheel_joint_ids]
-    vmc_raw_torque = cfg.wheel_damping * (wheel_vel_ref - mirrored_joint_vel)
+    vmc_raw_torque = cfg.wheel_damping * (wheel_vel_ref - forward_joint_vel)
     configured_torque_limits = torch.as_tensor(cfg.torque_limits, device=joint_vel.device, dtype=joint_vel.dtype)
     vmc_clipped_physical_torque = torch.clamp(
         vmc_raw_torque,
         -configured_torque_limits[wheel_joint_ids],
         configured_torque_limits[wheel_joint_ids],
     )
-    vmc_clipped_torque = torch.stack([vmc_clipped_physical_torque[:, 0], -vmc_clipped_physical_torque[:, 1]], dim=1)
+    vmc_clipped_torque = torch.stack([-vmc_clipped_physical_torque[:, 0], vmc_clipped_physical_torque[:, 1]], dim=1)
 
     actuator = robot.actuators["wheel"]
     actuator_joint_indices = actuator.joint_indices.detach().cpu().tolist()
@@ -240,7 +240,7 @@ def _print_wheel_state(env, action: torch.Tensor, step: int, phase: str) -> None
     axis_w = _wheel_axis_w(robot, urdf_path)
     rel_ang_vel_w = robot.data.body_ang_vel_w[:, wheel_body_ids, :] - robot.data.body_ang_vel_w[:, parent_body_ids, :]
     projected_joint_vel = torch.sum(rel_ang_vel_w * axis_w, dim=-1)
-    mirrored_projected_joint_vel = torch.stack([projected_joint_vel[:, 0], -projected_joint_vel[:, 1]], dim=1)
+    forward_projected_joint_vel = torch.stack([-projected_joint_vel[:, 0], projected_joint_vel[:, 1]], dim=1)
 
     wheel_pos_b = quat_apply_inverse(
         robot.data.root_quat_w.unsqueeze(1).expand(-1, 2, -1),
@@ -268,11 +268,11 @@ def _print_wheel_state(env, action: torch.Tensor, step: int, phase: str) -> None
     print(f"wheel action raw [L, R]:       {_fmt(wheel_action[0])}")
     print(f"wheel vel ref [rad/s] [L, R]:  {_fmt(wheel_vel_ref[0])}")
     print(f"joint pos [rad] [L, R]:        {_fmt(joint_pos[0])}")
-    print(f"mirrored pos [rad] [L, R]:     {_fmt(mirrored_joint_pos[0])}")
+    print(f"forward pos [rad] [L, R]:      {_fmt(forward_joint_pos[0])}")
     print(f"joint vel [rad/s] [L, R]:      {_fmt(joint_vel[0])}")
-    print(f"mirrored vel [rad/s] [L, R]:   {_fmt(mirrored_joint_vel[0])}")
+    print(f"forward vel [rad/s] [L, R]:    {_fmt(forward_joint_vel[0])}")
     print(f"axis-proj vel [rad/s] [L, R]:  {_fmt(projected_joint_vel[0])}")
-    print(f"mirrored axis vel [L, R]:      {_fmt(mirrored_projected_joint_vel[0])}")
+    print(f"forward axis vel [L, R]:       {_fmt(forward_projected_joint_vel[0])}")
     print(f"vel projection error [L, R]:   {_fmt((joint_vel - projected_joint_vel)[0])}")
     print(f"VMC physical torque [L, R]:    {_fmt(vmc_raw_torque[0])}")
     print(f"VMC joint torque [L, R]:       {_fmt(vmc_clipped_torque[0])}")

@@ -176,10 +176,10 @@ def wheel_joint_pos(
     env: ManagerBasedEnv,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
 ) -> torch.Tensor:
-    """Mirrored wheel joint positions: positive means the same rolling direction for both wheels."""
+    """Forward-positive wheel joint positions for both wheels."""
     asset: Articulation = env.scene[asset_cfg.name]
     wheel_pos = asset.data.joint_pos[:, asset_cfg.joint_ids].clone()
-    wheel_pos[:, 1] = -wheel_pos[:, 1]
+    wheel_pos[:, 0] = -wheel_pos[:, 0]
     return wheel_pos
 
 
@@ -187,10 +187,10 @@ def wheel_joint_vel(
     env: ManagerBasedEnv,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
 ) -> torch.Tensor:
-    """Mirrored wheel joint velocities: positive means the same rolling direction for both wheels."""
+    """Forward-positive wheel joint velocities for both wheels."""
     asset: Articulation = env.scene[asset_cfg.name]
     wheel_vel = asset.data.joint_vel[:, asset_cfg.joint_ids].clone()
-    wheel_vel[:, 1] = -wheel_vel[:, 1]
+    wheel_vel[:, 0] = -wheel_vel[:, 0]
     return wheel_vel
 
 
@@ -210,6 +210,20 @@ def previous_action(
     raise ValueError(f"Unable to find action term '{action_name}' in action manager.")
 
 
+def previous_previous_action(
+    env: ManagerBasedEnv,
+    action_name: str | None = None,
+) -> torch.Tensor:
+    """Two-step action history from the action term when available."""
+    if action_name is not None:
+        term = env.action_manager.get_term(action_name)
+        if hasattr(term, "previous_previous_actions"):
+            return term.previous_previous_actions
+    if hasattr(env.action_manager, "prev_prev_action"):
+        return env.action_manager.prev_prev_action
+    return torch.zeros_like(previous_action(env, action_name))
+
+
 def joint_acc(
     env: ManagerBasedEnv,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
@@ -217,6 +231,93 @@ def joint_acc(
     """Joint accelerations from articulation data."""
     asset: Articulation = env.scene[asset_cfg.name]
     return asset.data.joint_acc[:, asset_cfg.joint_ids]
+
+
+def applied_joint_torque(
+    env: ManagerBasedEnv,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Applied joint torques for privileged critic observations."""
+    asset: Articulation = env.scene[asset_cfg.name]
+    return asset.data.applied_torque[:, asset_cfg.joint_ids]
+
+
+def body_mass_delta(
+    env: ManagerBasedEnv,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Current body mass minus default mass, summed over selected bodies."""
+    asset: Articulation = env.scene[asset_cfg.name]
+    try:
+        masses = asset.root_physx_view.get_masses().to(env.device)
+        default_masses = asset.data.default_mass.to(env.device)
+        body_ids = asset_cfg.body_ids
+        if isinstance(body_ids, slice):
+            delta = masses[:, body_ids] - default_masses[:, body_ids]
+        else:
+            delta = masses[:, body_ids] - default_masses[:, body_ids]
+        return torch.sum(delta, dim=1, keepdim=True)
+    except Exception:
+        return torch.zeros(env.num_envs, 1, device=env.device)
+
+
+def body_com_pos(
+    env: ManagerBasedEnv,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Current local body center-of-mass position."""
+    asset: Articulation = env.scene[asset_cfg.name]
+    try:
+        coms = asset.root_physx_view.get_coms().to(env.device)[..., :3]
+        body_ids = asset_cfg.body_ids
+        if isinstance(body_ids, slice):
+            selected = coms[:, body_ids]
+        else:
+            selected = coms[:, body_ids]
+        return torch.mean(selected, dim=1)
+    except Exception:
+        return torch.zeros(env.num_envs, 3, device=env.device)
+
+
+def default_joint_pos_delta(
+    env: ManagerBasedEnv,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Delta between randomized default joint position and the first observed default."""
+    asset: Articulation = env.scene[asset_cfg.name]
+    if not hasattr(default_joint_pos_delta, "_raw_defaults"):
+        default_joint_pos_delta._raw_defaults = {}
+    env_key = id(env)
+    if env_key not in default_joint_pos_delta._raw_defaults:
+        default_joint_pos_delta._raw_defaults[env_key] = asset.data.default_joint_pos.clone()
+    raw_default = default_joint_pos_delta._raw_defaults[env_key]
+    return asset.data.default_joint_pos[:, asset_cfg.joint_ids] - raw_default[:, asset_cfg.joint_ids]
+
+
+def material_static_friction(
+    env: ManagerBasedEnv,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Mean static friction coefficient over selected robot collision shapes."""
+    asset: Articulation = env.scene[asset_cfg.name]
+    try:
+        materials = asset.root_physx_view.get_material_properties().to(env.device)
+        return torch.mean(materials[..., 0], dim=1, keepdim=True)
+    except Exception:
+        return torch.zeros(env.num_envs, 1, device=env.device)
+
+
+def material_restitution(
+    env: ManagerBasedEnv,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Mean restitution coefficient over selected robot collision shapes."""
+    asset: Articulation = env.scene[asset_cfg.name]
+    try:
+        materials = asset.root_physx_view.get_material_properties().to(env.device)
+        return torch.mean(materials[..., 2], dim=1, keepdim=True)
+    except Exception:
+        return torch.zeros(env.num_envs, 1, device=env.device)
 
 
 def wl_vmc_commands(
