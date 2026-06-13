@@ -76,6 +76,17 @@ class WLVMCVanillaFlatEnvCfg(WLVMCVanillaRoughEnvCfg):
         # no terrain curriculum
         self.curriculum.terrain_levels = None
 
+        # Override default leg length to be shorter for flat terrain
+        self.vmc_actions.l0_offset = 0.16
+        self.actions.vmc.l0_offset = 0.16
+
+        # Disable feet_distance_y_exp: wheel Y is constant (kinematic invariant),
+        # the policy cannot control it through actions.
+        self.rewards.feet_distance_y_exp.weight = 0.0
+
+        # Stronger penalty on left/right theta0 asymmetry for better leg synchronization
+        self.rewards.nominal_state.weight = -2.0
+
         # If the weight of rewards is 0, set rewards to None
         if self.__class__.__name__ == "WLVMCVanillaFlatEnvCfg":
             self.disable_zero_weight_rewards()

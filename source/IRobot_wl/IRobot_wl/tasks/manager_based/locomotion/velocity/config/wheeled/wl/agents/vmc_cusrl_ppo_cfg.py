@@ -41,5 +41,5 @@ class WLVMCVanillaRoughTrainerCfg(TrainerCfg):
 
 @dataclass
 class WLVMCVanillaFlatTrainerCfg(WLVMCVanillaRoughTrainerCfg):
-    max_iterations = 2000
+    max_iterations = 5000
     experiment_name = "wl_vmc_flat"
