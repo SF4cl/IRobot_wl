@@ -9,6 +9,12 @@
 
 import argparse
 import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+LOCAL_SOURCE_DIR = REPO_ROOT / "source" / "IRobot_wl"
+if str(LOCAL_SOURCE_DIR) not in sys.path:
+    sys.path.insert(0, str(LOCAL_SOURCE_DIR))
 
 from isaaclab.app import AppLauncher
 
@@ -284,9 +290,9 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         keyboard_cmd = keyboard_controller.advance().unsqueeze(0) if keyboard_controller is not None else None
 
         wheel_vel = dof_vel[:, _wheel_joint_ids]
-        vmc_wheel_vel = -wheel_vel
+        vmc_wheel_vel = wheel_vel
         wheel_torque = torques[:, _wheel_joint_ids]
-        vmc_wheel_torque = -wheel_torque
+        vmc_wheel_torque = wheel_torque
         left_torque = torques[:, _leg_joint_ids[:2]]
         right_torque = torques[:, _leg_joint_ids[2:4]]
 

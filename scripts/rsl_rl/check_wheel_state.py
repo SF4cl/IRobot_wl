@@ -11,8 +11,15 @@ the wheel-link angular velocity projected onto the URDF joint axis.
 """Launch Isaac Sim Simulator first."""
 
 import argparse
+import inspect
 from pathlib import Path
+import sys
 import xml.etree.ElementTree as ET
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+LOCAL_SOURCE_DIR = REPO_ROOT / "source" / "IRobot_wl"
+if str(LOCAL_SOURCE_DIR) not in sys.path:
+    sys.path.insert(0, str(LOCAL_SOURCE_DIR))
 
 from isaaclab.app import AppLauncher
 
@@ -47,6 +54,12 @@ parser.add_argument(
     default=False,
     help="Disable startup/reset randomization terms for a cleaner one-env diagnostic.",
 )
+parser.add_argument(
+    "--wheel_only_static",
+    action="store_true",
+    default=False,
+    help="Fix the base, disable gravity/leg VMC torques, and test only wheel joint response.",
+)
 parser.add_argument("--show", action="store_true", default=False, help="Show the simulator window.")
 parser.add_argument(
     "--disable_fabric", action="store_true", default=False, help="Disable fabric and use USD I/O operations."
@@ -69,6 +82,8 @@ from isaaclab.utils.math import quat_apply, quat_apply_inverse
 from isaaclab_tasks.utils import parse_env_cfg
 
 import IRobot_wl.tasks  # noqa: F401
+import IRobot_wl.tasks.manager_based.locomotion.velocity.mdp.vmc as vmc_module
+from IRobot_wl.tasks.manager_based.locomotion.velocity.mdp.vmc import compute_vmc_action
 
 
 WHEEL_JOINT_NAMES = ["l_wheel_Joint", "r_wheel_Joint"]
@@ -207,8 +222,8 @@ def _print_wheel_state(env, action: torch.Tensor, step: int, phase: str) -> None
     wheel_vel_ref = wheel_action * cfg.action_scale_vel
     joint_pos = robot.data.joint_pos[:, wheel_joint_ids]
     joint_vel = robot.data.joint_vel[:, wheel_joint_ids]
-    vmc_joint_pos = -joint_pos
-    vmc_joint_vel = -joint_vel
+    vmc_joint_pos = joint_pos
+    vmc_joint_vel = joint_vel
     effort_target = robot.data.joint_effort_target[:, wheel_joint_ids]
     computed_torque = robot.data.computed_torque[:, wheel_joint_ids]
     applied_torque = robot.data.applied_torque[:, wheel_joint_ids]
@@ -219,7 +234,42 @@ def _print_wheel_state(env, action: torch.Tensor, step: int, phase: str) -> None
         -configured_torque_limits[wheel_joint_ids],
         configured_torque_limits[wheel_joint_ids],
     )
-    vmc_clipped_physical_torque = -vmc_clipped_torque
+    vmc_clipped_physical_torque = vmc_clipped_torque
+    leg_joint_ids, leg_joint_names = robot.find_joints(cfg.leg_joint_names, preserve_order=True)
+    expected_full_torque = compute_vmc_action(
+        actions=action,
+        dof_pos=robot.data.joint_pos,
+        dof_vel=robot.data.joint_vel,
+        leg_joint_indices=list(leg_joint_ids),
+        wheel_joint_indices=list(wheel_joint_ids),
+        l1=cfg.l1,
+        l2=cfg.l2,
+        offset=cfg.offset,
+        theta1_offset=cfg.theta1_offset,
+        theta2_offset=cfg.theta2_offset,
+        theta0_offset=cfg.theta0_offset,
+        kp_theta=cfg.kp_theta,
+        kd_theta=cfg.kd_theta,
+        kp_l0=cfg.kp_l0,
+        kd_l0=cfg.kd_l0,
+        l0_offset=cfg.l0_offset,
+        l0_min=cfg.l0_min,
+        l0_max=cfg.l0_max,
+        feedforward_force=cfg.feedforward_force,
+        action_scale_theta=cfg.action_scale_theta,
+        action_scale_l0=cfg.action_scale_l0,
+        action_scale_vel=cfg.action_scale_vel,
+        wheel_damping=cfg.wheel_damping,
+        torque_limits=configured_torque_limits,
+    )
+    expected_wheel_torque = expected_full_torque[:, wheel_joint_ids]
+    action_term = env.unwrapped.action_manager._terms["vmc"]
+    action_term_torque = getattr(action_term, "_last_torques", None)
+    action_term_wheel_torque = (
+        action_term_torque[:, wheel_joint_ids] if action_term_torque is not None else torch.zeros_like(expected_wheel_torque)
+    )
+    action_term_raw = getattr(action_term, "_raw_actions", None)
+    action_term_delayed = getattr(action_term, "_delayed_actions", None)
 
     actuator = robot.actuators["wheel"]
     actuator_joint_indices = actuator.joint_indices.detach().cpu().tolist()
@@ -240,7 +290,7 @@ def _print_wheel_state(env, action: torch.Tensor, step: int, phase: str) -> None
     axis_w = _wheel_axis_w(robot, urdf_path)
     rel_ang_vel_w = robot.data.body_ang_vel_w[:, wheel_body_ids, :] - robot.data.body_ang_vel_w[:, parent_body_ids, :]
     projected_joint_vel = torch.sum(rel_ang_vel_w * axis_w, dim=-1)
-    vmc_projected_joint_vel = -projected_joint_vel
+    vmc_projected_joint_vel = projected_joint_vel
 
     wheel_pos_b = quat_apply_inverse(
         robot.data.root_quat_w.unsqueeze(1).expand(-1, 2, -1),
@@ -256,6 +306,7 @@ def _print_wheel_state(env, action: torch.Tensor, step: int, phase: str) -> None
     print(f"URDF asset: {urdf_path}")
     print(f"wheel joints: {wheel_joint_names}, ids={wheel_joint_ids}")
     print(f"wheel bodies: {wheel_body_names}, ids={wheel_body_ids}")
+    print(f"leg joints: {leg_joint_names}, ids={list(leg_joint_ids)}")
     print(f"robot joint order: {robot.joint_names}")
     print(f"VMC torque limits full:        {_fmt(configured_torque_limits)}")
     print(f"VMC wheel torque limits:       {_fmt(configured_torque_limits[wheel_joint_ids])}")
@@ -266,6 +317,10 @@ def _print_wheel_state(env, action: torch.Tensor, step: int, phase: str) -> None
     print(f"actuator effort limit [L, R]:  {_fmt(effort_limit[0])}")
     print(f"actuator velocity limit [L,R]: {_fmt(velocity_limit[0])}")
     print(f"wheel action raw [L, R]:       {_fmt(wheel_action[0])}")
+    if action_term_raw is not None:
+        print(f"action term raw [L, R]:        {_fmt(torch.stack([action_term_raw[:, 2], action_term_raw[:, 5]], dim=1)[0])}")
+    if action_term_delayed is not None:
+        print(f"action term delayed [L, R]:    {_fmt(torch.stack([action_term_delayed[:, 2], action_term_delayed[:, 5]], dim=1)[0])}")
     print(f"wheel vel ref [rad/s] [L, R]:  {_fmt(wheel_vel_ref[0])}")
     print(f"joint pos [rad] [L, R]:        {_fmt(joint_pos[0])}")
     print(f"VMC pos [rad] [L, R]:          {_fmt(vmc_joint_pos[0])}")
@@ -277,12 +332,14 @@ def _print_wheel_state(env, action: torch.Tensor, step: int, phase: str) -> None
     print(f"VMC torque unclipped [L, R]:   {_fmt(vmc_raw_torque[0])}")
     print(f"VMC torque clipped [L, R]:     {_fmt(vmc_clipped_torque[0])}")
     print(f"VMC physical torque [L, R]:    {_fmt(vmc_clipped_physical_torque[0])}")
+    print(f"expected torque actual path:   {_fmt(expected_wheel_torque[0])}")
+    print(f"action term torque [L, R]:     {_fmt(action_term_wheel_torque[0])}")
     print(f"joint effort target [L, R]:    {_fmt(effort_target[0])}")
     print(f"computed torque [Nm] [L, R]:   {_fmt(computed_torque[0])}")
     print(f"motor min effort [Nm] [L, R]:  {_fmt(motor_min_effort[0])}")
     print(f"motor max effort [Nm] [L, R]:  {_fmt(motor_max_effort[0])}")
     print(f"applied torque [Nm] [L, R]:    {_fmt(applied_torque[0])}")
-    print(f"target error [Nm] [L, R]:      {_fmt((effort_target - vmc_clipped_physical_torque)[0])}")
+    print(f"target error [Nm] [L, R]:      {_fmt((effort_target - expected_wheel_torque)[0])}")
     print(f"actuator error [Nm] [L, R]:    {_fmt((applied_torque - computed_torque)[0])}")
     print(f"wheel axis world [x,y,z] L:    {_fmt(axis_w[0, 0])}")
     print(f"wheel axis world [x,y,z] R:    {_fmt(axis_w[0, 1])}")
@@ -309,6 +366,23 @@ def main() -> None:
     if args_cli.decimation is not None:
         env_cfg.decimation = args_cli.decimation
         env_cfg.sim.render_interval = args_cli.decimation
+    if args_cli.wheel_only_static:
+        env_cfg.scene.terrain = None
+        env_cfg.scene.height_scanner = None
+        env_cfg.scene.height_scanner_base = None
+        env_cfg.scene.robot.spawn.fix_base = True
+        env_cfg.scene.robot.spawn.rigid_props.disable_gravity = True
+        if hasattr(env_cfg.rewards, "base_height_enhance"):
+            env_cfg.rewards.base_height_enhance = None
+        if hasattr(env_cfg.terminations, "terrain_out_of_bounds"):
+            env_cfg.terminations.terrain_out_of_bounds = None
+        env_cfg.actions.vmc.feedforward_force = 0.0
+        env_cfg.actions.vmc.kp_theta = 0.0
+        env_cfg.actions.vmc.kd_theta = 0.0
+        env_cfg.actions.vmc.kp_l0 = 0.0
+        env_cfg.actions.vmc.kd_l0 = 0.0
+        env_cfg.actions.vmc.randomize_action_delay = False
+        env_cfg.actions.vmc.action_delay_ms_range = (0.0, 0.0)
     if args_cli.wheel_damping is not None:
         env_cfg.actions.vmc.wheel_damping = args_cli.wheel_damping
     if args_cli.wheel_torque_limit is not None:
@@ -329,6 +403,10 @@ def main() -> None:
 
     print(f"[INFO] Gym observation space: {env.observation_space}")
     print(f"[INFO] Gym action space: {env.action_space}")
+    print(f"[INFO] IRobot_wl package: {Path(IRobot_wl.__file__).resolve()}")
+    print(f"[INFO] VMC module: {Path(vmc_module.__file__).resolve()}")
+    print(f"[INFO] VMC action class: {env.unwrapped.action_manager._terms['vmc'].__class__}")
+    print(f"[INFO] VMC action class file: {Path(inspect.getfile(env.unwrapped.action_manager._terms['vmc'].__class__)).resolve()}")
 
     env.reset()
     action = _make_action(env)

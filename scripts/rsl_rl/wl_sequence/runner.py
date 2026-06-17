@@ -120,7 +120,7 @@ class WlSequenceRunner:
         right_leg_torque = torques[:, self._leg_joint_ids[2:4]]
         wheel_torque = torques[:, self._wheel_joint_ids]
         wheel_vel = dof_vel[:, self._wheel_joint_ids]
-        vmc_wheel_vel = -wheel_vel
+        vmc_wheel_vel = wheel_vel
 
         # Base velocity (in body frame) vs command
         base_lin_vel = self._robot.data.root_lin_vel_b

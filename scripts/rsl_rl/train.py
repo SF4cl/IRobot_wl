@@ -9,6 +9,12 @@
 
 import argparse
 import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
+LOCAL_SOURCE_DIR = REPO_ROOT / "source" / "IRobot_wl"
+if str(LOCAL_SOURCE_DIR) not in sys.path:
+    sys.path.insert(0, str(LOCAL_SOURCE_DIR))
 
 from isaaclab.app import AppLauncher
 

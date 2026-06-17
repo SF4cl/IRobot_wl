@@ -72,7 +72,7 @@ class WLVMCVanillaActionsCfg:
     action_scale_vel: float = 10.0
 
     # Wheel control
-    wheel_damping: float = 0.2  # damping for wheel velocity PD [Nm*s/rad]
+    wheel_damping: float = 0.05  # damping for wheel velocity PD [Nm*s/rad]
 
     # Action clipping
     clip_actions: float = 100.0
@@ -142,7 +142,7 @@ class WLVMCControlActionsCfg:
         action_scale_theta=0.5,
         action_scale_l0=0.1,
         action_scale_vel=10.0,
-        wheel_damping=0.2,
+        wheel_damping=0.05,
         clip_actions=100.0,
         # Full articulation joint order is [lf0, rf0, lf1, rf1, l_wheel, r_wheel].
         torque_limits=[30.0, 30.0, 30.0, 30.0, 4.0, 4.0],
