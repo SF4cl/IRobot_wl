@@ -81,13 +81,10 @@ def compute_vmc_state(
     L0_dot = (L0_fwd - L0) / dt
     theta0_dot = (theta0_fwd - theta0) / dt
 
-    # Forward-positive wheel convention: positive wheel state drives body +X.
-    wheel_pos = torch.stack(
-        [-dof_pos[:, wheel_joint_indices[0]], dof_pos[:, wheel_joint_indices[1]]], dim=1
-    )
-    wheel_vel = torch.stack(
-        [-dof_vel[:, wheel_joint_indices[0]], dof_vel[:, wheel_joint_indices[1]]], dim=1
-    )
+    # VMC wheel convention: policy-positive wheel motion maps to the opposite
+    # physical joint direction on both wheel joints.
+    wheel_pos = -dof_pos[:, wheel_joint_indices]
+    wheel_vel = -dof_vel[:, wheel_joint_indices]
 
     return {
         "theta1": theta1,
@@ -305,9 +302,9 @@ def compute_vmc_action(
     torques[:, leg_joint_indices[2]] = -T1[:, 1]  # right hip
     torques[:, leg_joint_indices[3]] = -T2[:, 1]  # right knee
 
-    # Wheels: map forward-positive task torques back to physical joint axes.
+    # Wheels: map VMC/task-space wheel torques back to physical joint axes.
     torques[:, wheel_joint_indices[0]] = -torque_wheel[:, 0]  # left wheel
-    torques[:, wheel_joint_indices[1]] = torque_wheel[:, 1]  # right wheel
+    torques[:, wheel_joint_indices[1]] = -torque_wheel[:, 1]  # right wheel
 
     # Apply motor torque scale (domain randomization, matching WL-Gym)
     torques = torques * torque_scale
@@ -481,7 +478,7 @@ class WLVMCActionCfg(ActionTermCfg):
     kd_theta: float = 3.0
     kp_l0: float = 900.0
     kd_l0: float = 20.0
-    l0_offset: float = 0.19
+    l0_offset: float = 0.17
     l0_min: float = 0.1219258562330587
     l0_max: float = 0.3006386827708927
     feedforward_force: float = 40.0
@@ -549,7 +546,7 @@ def convert_vmc_to_joint_actions(
     L0 = L0 * action_scale_l0 + l0_offset
     L0 = torch.clamp(L0, min=l0_min, max=l0_max)
 
-    wheel_vel = torch.stack([actions[:, 2], actions[:, 5]], dim=1)  # forward-positive, (num_envs, 2)
+    wheel_vel = torch.stack([actions[:, 2], actions[:, 5]], dim=1)  # VMC/task convention, (num_envs, 2)
     wheel_vel = wheel_vel * action_scale_vel
 
     # IK: task-space → mirrored leg-frame joint angles used by the original
@@ -571,10 +568,9 @@ def convert_vmc_to_joint_actions(
     knee_r = theta2_offset - theta2[:, 1:2]
 
     # Assemble: [hip_l, knee_l, hip_r, knee_r, wheel_vel_l, wheel_vel_r].
-    # Wheel actions are forward-positive, while the physical joint axes use the
-    # opposite sign on the left wheel and the same sign on the right wheel.
+    # VMC wheel actions use the opposite sign of both physical wheel axes.
     joint_actions = torch.cat(
-        [hip_l, knee_l, hip_r, knee_r, -wheel_vel[:, 0:1], wheel_vel[:, 1:2]],
+        [hip_l, knee_l, hip_r, knee_r, -wheel_vel[:, 0:1], -wheel_vel[:, 1:2]],
         dim=1,
     )
     return joint_actions

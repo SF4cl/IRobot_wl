@@ -137,6 +137,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     env_cfg.curriculum.command_levels_lin_vel = None
     env_cfg.curriculum.command_levels_ang_vel = None
 
+    keyboard_controller = None
     if args_cli.keyboard:
         env_cfg.scene.num_envs = 1
         env_cfg.terminations.time_out = None
@@ -146,9 +147,24 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             v_y_sensitivity=env_cfg.commands.base_velocity.ranges.lin_vel_y[1],
             omega_z_sensitivity=env_cfg.commands.base_velocity.ranges.ang_vel_z[1],
         )
-        controller = Se2Keyboard(config)
+        keyboard_controller = Se2Keyboard(config)
+        keyboard_controller.reset()
+        print(keyboard_controller)
+
+        def keyboard_vmc_command_obs(env):
+            keyboard_cmd = keyboard_controller.advance().to(env.device).unsqueeze(0)
+            # VMC policies were trained with [lin_x * 2, yaw * 0.25, height * 5],
+            # not raw SE(2) [vx, vy, omega].
+            if hasattr(env.cfg, "vmc_actions"):
+                height_cmd = torch.full_like(keyboard_cmd[:, 0], 0.23)
+                return torch.stack(
+                    [keyboard_cmd[:, 0] * 2.0, keyboard_cmd[:, 2] * 0.25, height_cmd * 5.0],
+                    dim=1,
+                )
+            return keyboard_cmd
+
         env_cfg.observations.policy.velocity_commands = ObsTerm(
-            func=lambda env: torch.tensor(controller.advance(), dtype=torch.float32).unsqueeze(0).to(env.device),
+            func=keyboard_vmc_command_obs,
         )
 
     # specify directory for logging experiments
@@ -265,10 +281,12 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         base_lin_vel = robot.data.root_lin_vel_b
         base_ang_vel = robot.data.root_ang_vel_b
         commands = env.unwrapped.command_manager.get_command("base_velocity")
+        keyboard_cmd = keyboard_controller.advance().unsqueeze(0) if keyboard_controller is not None else None
 
         wheel_vel = dof_vel[:, _wheel_joint_ids]
-        forward_wheel_vel = torch.stack([-wheel_vel[:, 0], wheel_vel[:, 1]], dim=1)
+        vmc_wheel_vel = -wheel_vel
         wheel_torque = torques[:, _wheel_joint_ids]
+        vmc_wheel_torque = -wheel_torque
         left_torque = torques[:, _leg_joint_ids[:2]]
         right_torque = torques[:, _leg_joint_ids[2:4]]
 
@@ -292,6 +310,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         print(f" Step debug (Env0)")
         print(f"  Base lin vel [x,y,z]:      {_fmt(base_lin_vel[0])}")
         print(f"  Commands   [x,yaw,head]:   {_fmt(commands[0])}")
+        if keyboard_cmd is not None:
+            print(f"  Keyboard   [vx,vy,yaw]:    {_fmt(keyboard_cmd[0])}")
         print(f"  --- VMC task space ---")
         print(f"  theta0     [L, R]:         {_fmt(vmc_state['theta0'][0])}")
         print(f"  theta0 ref [L, R]:         {_fmt(theta0_ref[0])}")
@@ -299,9 +319,10 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         print(f"  L0 ref     [L, R]:         {_fmt(l0_ref[0])}")
         print(f"  --- Wheels ---")
         print(f"  joint wheel vel [L, R]:    {_fmt(wheel_vel[0])}")
-        print(f"  forward vel    [L, R]:    {_fmt(forward_wheel_vel[0])}")
         print(f"  wheel vel ref [L, R]:      {_fmt(wheel_vel_ref[0])}")
-        print(f"  wheel torque  [L, R]:      {_fmt(wheel_torque[0])}")
+        print(f"  VMC wheel vel [L, R]:      {_fmt(vmc_wheel_vel[0])}")
+        print(f"  joint torque  [L, R]:      {_fmt(wheel_torque[0])}")
+        print(f"  VMC torque    [L, R]:      {_fmt(vmc_wheel_torque[0])}")
         print(f"  --- Leg torques ---")
         print(f"  left  [hip, knee]:         {_fmt(left_torque[0])}")
         print(f"  right [hip, knee]:         {_fmt(right_torque[0])}")

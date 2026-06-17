@@ -330,26 +330,11 @@ def wl_vmc_commands(
 ) -> torch.Tensor:
     """WL-Gym command observation layout: [lin_vel_x, ang_vel_yaw, base_height_cmd].
 
-    Height commands are randomized in [0.1, 0.25] and resampled every 5 seconds,
-    matching the original WL-Gym behaviour.
+    The height command is supplied by the environment config so the policy
+    observation matches the height reward target.
     """
     commands = env.command_manager.get_command(command_name)
-
-    # Height command with periodic resampling (matching WL-Gym resampling_time = 5s)
-    resample_every = int(5.0 / env.step_dt)
-    resample_mask = (env.episode_length_buf % resample_every) == 0
-
-    # Use function attribute to persist height buffer across calls
-    if not hasattr(wl_vmc_commands, "_height_buf"):
-        wl_vmc_commands._height_buf = {}  # keyed by id(env) to handle multiple envs
-    env_key = id(env)
-    if env_key not in wl_vmc_commands._height_buf:
-        wl_vmc_commands._height_buf[env_key] = (
-            0.1 + 0.15 * torch.rand(env.num_envs, device=env.device)
-        )
-
-    height_buf = wl_vmc_commands._height_buf[env_key]
-    height_buf[resample_mask] = 0.1 + 0.15 * torch.rand(int(resample_mask.sum()), device=env.device)
+    height_buf = torch.full((env.num_envs,), height_command, device=env.device, dtype=commands.dtype)
 
     obs = torch.stack(
         [

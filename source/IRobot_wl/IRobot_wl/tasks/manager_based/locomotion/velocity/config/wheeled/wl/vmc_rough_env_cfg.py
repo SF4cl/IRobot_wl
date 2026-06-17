@@ -61,7 +61,7 @@ class WLVMCVanillaActionsCfg:
     kd_l0: float = 20.0  # length D gain [N*s/m]
 
     # VMC parameters
-    l0_offset: float = 0.19  # default leg length [m]
+    l0_offset: float = 0.17  # default leg length [m]
     l0_min: float = 0.1219258562330587  # reachable L0 lower bound [m]
     l0_max: float = 0.3006386827708927  # reachable L0 upper bound [m]
     feedforward_force: float = 40.0  # gravity compensation [N]
@@ -72,7 +72,7 @@ class WLVMCVanillaActionsCfg:
     action_scale_vel: float = 10.0
 
     # Wheel control
-    wheel_damping: float = 0.05  # damping for wheel velocity PD [Nm*s/rad]
+    wheel_damping: float = 0.2  # damping for wheel velocity PD [Nm*s/rad]
 
     # Action clipping
     clip_actions: float = 100.0
@@ -135,14 +135,14 @@ class WLVMCControlActionsCfg:
         kd_theta=3.0,
         kp_l0=900.0,
         kd_l0=20.0,
-        l0_offset=0.19,
+        l0_offset=0.17,
         l0_min=0.1219258562330587,
         l0_max=0.3006386827708927,
         feedforward_force=40.0,
         action_scale_theta=0.5,
         action_scale_l0=0.1,
         action_scale_vel=10.0,
-        wheel_damping=0.05,
+        wheel_damping=0.2,
         clip_actions=100.0,
         # Full articulation joint order is [lf0, rf0, lf1, rf1, l_wheel, r_wheel].
         torque_limits=[30.0, 30.0, 30.0, 30.0, 4.0, 4.0],
@@ -171,7 +171,7 @@ class WLVMCObsCfg(ObservationsCfg):
         )
         velocity_commands = ObsTerm(
             func=mdp.wl_vmc_commands,
-            params={"command_name": "base_velocity", "height_command": 0.25},
+            params={"command_name": "base_velocity", "height_command": 0.23},
             clip=(-100.0, 100.0),
             scale=1.0,
         )
@@ -271,7 +271,7 @@ class WLVMCObsCfg(ObservationsCfg):
         projected_gravity = ObsTerm(func=mdp.projected_gravity, clip=(-100.0, 100.0), scale=1.0)
         velocity_commands = ObsTerm(
             func=mdp.wl_vmc_commands,
-            params={"command_name": "base_velocity", "height_command": 0.25},
+            params={"command_name": "base_velocity", "height_command": 0.23},
             clip=(-100.0, 100.0),
             scale=1.0,
         )
@@ -493,7 +493,7 @@ class WLVMCVanillaRewardsCfg(RewardsCfg):
     base_height_enhance = RewTerm(
         func=mdp.base_height_enhance,
         weight=0.0,
-        params={"target_height": 0.25, "sensor_cfg": None},
+        params={"target_height": 0.23, "sensor_cfg": None},
     )
 
     # Wheel-specific rewards (added to base)
@@ -574,16 +574,17 @@ class WLVMCVanillaRoughEnvCfg(LocomotionVelocityRoughEnvCfg):
         self.actions.vmc.action_scale_vel = self.vmc_actions.action_scale_vel
         self.actions.vmc.wheel_damping = self.vmc_actions.wheel_damping
         self.actions.vmc.clip_actions = self.vmc_actions.clip_actions
-        self.actions.vmc.randomize_action_delay = True
-        self.actions.vmc.action_delay_ms_range = (0.0, 10.0)
+        self.actions.vmc.randomize_action_delay = False
+        self.actions.vmc.action_delay_ms_range = (0.0, 0.0)
 
         # ------------------------------Events------------------------------
-        self.events.randomize_rigid_body_mass_base.params["asset_cfg"].body_names = [self.base_link_name]
-        self.events.randomize_rigid_body_mass_others.params["asset_cfg"].body_names = [
-            f"^(?!.*{self.base_link_name}).*"
-        ]
-        self.events.randomize_com_positions.params["asset_cfg"].body_names = [self.base_link_name]
-        self.events.randomize_apply_external_force_torque.params["asset_cfg"].body_names = [self.base_link_name]
+        self.events.randomize_rigid_body_material = None
+        self.events.randomize_rigid_body_mass_base = None
+        self.events.randomize_rigid_body_mass_others = None
+        self.events.randomize_com_positions = None
+        self.events.randomize_apply_external_force_torque = None
+        self.events.randomize_actuator_gains = None
+        self.events.randomize_push_robot = None
 
         # ------------------------------Rewards------------------------------
         # General
@@ -594,11 +595,11 @@ class WLVMCVanillaRoughEnvCfg(LocomotionVelocityRoughEnvCfg):
         self.rewards.ang_vel_xy_l2.weight = -0.05
         self.rewards.flat_orientation_l2.weight = -10.0
         self.rewards.base_height_l2.weight = 0
-        self.rewards.base_height_l2.params["target_height"] = 0.25
+        self.rewards.base_height_l2.params["target_height"] = 0.23
         self.rewards.base_height_l2.params["sensor_cfg"] = None
         self.rewards.base_height_l2.params["asset_cfg"].body_names = [self.base_link_name]
         self.rewards.base_height_enhance.weight = 1.0
-        self.rewards.base_height_enhance.params["target_height"] = 0.25
+        self.rewards.base_height_enhance.params["target_height"] = 0.23
         self.rewards.nominal_state.weight = -0.3
         self.rewards.body_lin_acc_l2.weight = 0
 
@@ -652,6 +653,8 @@ class WLVMCVanillaRoughEnvCfg(LocomotionVelocityRoughEnvCfg):
         self.rewards.track_ang_vel_z_exp.weight = 1.0
         self.rewards.tracking_lin_vel_enhance.weight = 1.0
         self.rewards.tracking_ang_vel_enhance.weight = 1.0
+        self.rewards.track_lin_vel_enhance.weight = 0.0
+        self.rewards.track_ang_vel_enhance.weight = 0.0
 
         # Others
         self.rewards.feet_air_time.weight = 0
@@ -698,7 +701,7 @@ class WLVMCVanillaRoughEnvCfg(LocomotionVelocityRoughEnvCfg):
 
         # ------------------------------Commands------------------------------
         self.commands.base_velocity.resampling_time_range = (5.0, 5.0)
-        self.commands.base_velocity.ranges.lin_vel_x = (2.0, 2.3)
+        self.commands.base_velocity.ranges.lin_vel_x = (1.0, 1.0)
         self.commands.base_velocity.ranges.lin_vel_y = (0.0, 0.0)
         self.commands.base_velocity.ranges.ang_vel_z = (-3.14, 3.14)
         self.commands.base_velocity.heading_command = True

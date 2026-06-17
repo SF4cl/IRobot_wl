@@ -187,11 +187,12 @@
     </visual>
     <collision>
       <origin
-        xyz="0 0 0"
+        xyz="0 0 0.03"
         rpy="0 0 0" />
       <geometry>
-        <mesh
-          filename="../meshes/l_wheel_Link.STL" />
+        <cylinder
+          length="0.0487"
+          radius="0.058" />
       </geometry>
     </collision>
   </link>
@@ -351,11 +352,12 @@
     </visual>
     <collision>
       <origin
-        xyz="0 0 0"
+        xyz="0 0 0.03"
         rpy="0 0 0" />
       <geometry>
-        <mesh
-          filename="../meshes/r_wheel_Link.STL" />
+        <cylinder
+          length="0.0487"
+          radius="0.058" />
       </geometry>
     </collision>
   </link>
