@@ -91,12 +91,19 @@ def stand_still(
     env: ManagerBasedRLEnv,
     command_name: str,
     command_threshold: float = 0.06,
+    lin_x_threshold: float | None = None,
+    ang_z_threshold: float | None = None,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
 ) -> torch.Tensor:
-    """Penalize offsets from the default joint positions when the command is very small."""
-    # Penalize motion when command is nearly zero.
+    """Penalize offsets from default joint positions only for true standing commands."""
+    command = env.command_manager.get_command(command_name)
+    if lin_x_threshold is None:
+        lin_x_threshold = command_threshold
+    if ang_z_threshold is None:
+        ang_z_threshold = command_threshold
+    is_standing_command = (torch.abs(command[:, 0]) < lin_x_threshold) & (torch.abs(command[:, 2]) < ang_z_threshold)
     reward = mdp.joint_deviation_l1(env, asset_cfg)
-    reward *= torch.norm(env.command_manager.get_command(command_name), dim=1) < command_threshold
+    reward *= is_standing_command
     reward *= torch.clamp(-env.scene["robot"].data.projected_gravity_b[:, 2], 0, 0.7) / 0.7
     return reward
 
@@ -759,6 +766,33 @@ def leg_length_symmetry(
     theta2 = torch.stack([dof_pos[:, 1] + theta2_offset, -dof_pos[:, 3] + theta2_offset], dim=1)
     leg_length, _ = forward_kinematics(theta1, theta2, l1, l2, offset)
     reward = torch.square(leg_length[:, 0] - leg_length[:, 1])
+    reward *= torch.clamp(-env.scene["robot"].data.projected_gravity_b[:, 2], 0, 0.7) / 0.7
+    return reward
+
+
+def leg_angle_symmetry(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    leg_joint_names: list[str] | None = None,
+    l1: float = 0.21665632675675972,
+    l2: float = 0.2540023491164531,
+    offset: float = -0.007712217793726145,
+    theta1_offset: float = 0.14299916248023697,
+    theta2_offset: float = 2.406020345452543,
+) -> torch.Tensor:
+    """Penalize left/right leg-angle mismatch in task space."""
+    from IRobot_wl.tasks.manager_based.locomotion.velocity.mdp.vmc import forward_kinematics
+
+    asset: Articulation = env.scene[asset_cfg.name]
+    if leg_joint_names is None:
+        return torch.zeros(env.num_envs, device=env.device)
+
+    joint_indices = asset.find_joints(leg_joint_names)[0]
+    dof_pos = asset.data.joint_pos[:, joint_indices]
+    theta1 = torch.stack([dof_pos[:, 0] + theta1_offset, -dof_pos[:, 2] + theta1_offset], dim=1)
+    theta2 = torch.stack([dof_pos[:, 1] + theta2_offset, -dof_pos[:, 3] + theta2_offset], dim=1)
+    _, leg_angle = forward_kinematics(theta1, theta2, l1, l2, offset)
+    reward = torch.square(leg_angle[:, 0] - leg_angle[:, 1])
     reward *= torch.clamp(-env.scene["robot"].data.projected_gravity_b[:, 2], 0, 0.7) / 0.7
     return reward
 

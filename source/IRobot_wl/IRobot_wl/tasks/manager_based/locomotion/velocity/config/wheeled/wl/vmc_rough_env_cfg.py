@@ -69,10 +69,10 @@ class WLVMCVanillaActionsCfg:
     # Action scales
     action_scale_theta: float = 0.5
     action_scale_l0: float = 0.1
-    action_scale_vel: float = 10.0
+    action_scale_vel: float = 12.0
 
     # Wheel control
-    wheel_damping: float = 0.05  # damping for wheel velocity PD [Nm*s/rad]
+    wheel_damping: float = 0.08  # damping for wheel velocity PD [Nm*s/rad]
 
     # Action clipping
     clip_actions: float = 100.0
@@ -141,8 +141,8 @@ class WLVMCControlActionsCfg:
         feedforward_force=40.0,
         action_scale_theta=0.5,
         action_scale_l0=0.1,
-        action_scale_vel=10.0,
-        wheel_damping=0.05,
+        action_scale_vel=12.0,
+        wheel_damping=0.08,
         clip_actions=100.0,
         # Full articulation joint order is [lf0, rf0, lf1, rf1, l_wheel, r_wheel].
         torque_limits=[30.0, 30.0, 30.0, 30.0, 4.0, 4.0],
@@ -485,10 +485,23 @@ class WLVMCVanillaRewardsCfg(RewardsCfg):
             "theta2_offset": 2.406020345452543,
         },
     )
+    leg_angle_symmetry = RewTerm(
+        func=mdp.leg_angle_symmetry,
+        weight=-1.0,
+        params={
+            "asset_cfg": SceneEntityCfg("robot"),
+            "leg_joint_names": ["lf0_Joint", "lf1_Joint", "rf0_Joint", "rf1_Joint"],
+            "l1": 0.21665632675675972,
+            "l2": 0.2540023491164531,
+            "offset": -0.007712217793726145,
+            "theta1_offset": 0.14299916248023697,
+            "theta2_offset": 2.406020345452543,
+        },
+    )
     vmc_action_symmetry = RewTerm(
         func=mdp.vmc_action_symmetry,
         weight=-0.25,
-        params={"action_name": "vmc"},
+        params={"action_name": "vmc", "theta_scale": 1.0, "l0_scale": 1.0, "wheel_scale": 0.0},
     )
     base_height_enhance = RewTerm(
         func=mdp.base_height_enhance,

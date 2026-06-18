@@ -16,6 +16,20 @@ if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedEnv
 
 
+def _sample_nonzero_uniform(count: torch.Tensor | int, value_range: tuple[float, float], min_abs: float, device: torch.device):
+    count_int = int(count.item() if isinstance(count, torch.Tensor) else count)
+    if count_int == 0:
+        return torch.empty(0, device=device)
+    values = torch.empty(count_int, device=device).uniform_(*value_range)
+    if min_abs <= 0.0:
+        return values
+    signs = torch.where(values >= 0.0, 1.0, -1.0)
+    zero_signs = torch.where(torch.rand(count_int, device=device) >= 0.5, 1.0, -1.0)
+    signs = torch.where(values == 0.0, zero_signs, signs)
+    magnitudes = torch.clamp(torch.abs(values), min=min_abs)
+    return signs * magnitudes
+
+
 class UniformThresholdVelocityCommand(mdp.UniformVelocityCommand):
     """Command generator that generates a velocity command in SE(2) from uniform distribution with threshold.
 
@@ -87,6 +101,65 @@ class UniformThresholdVelocityCommandCfg(mdp.UniformVelocityCommandCfg):
     """Configuration for the uniform threshold velocity command generator."""
 
     class_type: type = UniformThresholdVelocityCommand
+
+
+class MixedModeVelocityCommand(UniformThresholdVelocityCommand):
+    """Velocity command sampler with explicit standing, straight, spin, and arc modes."""
+
+    cfg: "MixedModeVelocityCommandCfg"
+
+    def _resample_command(self, env_ids: Sequence[int]):
+        super()._resample_command(env_ids)
+        count = len(env_ids)
+        if count == 0:
+            return
+
+        probs = torch.tensor(self.cfg.mode_probabilities, device=self.device, dtype=torch.float)
+        probs = probs / torch.sum(probs)
+        modes = torch.multinomial(probs, count, replacement=True)
+
+        self.is_standing_env[env_ids] = modes == 0
+        self.is_heading_env[env_ids] = False
+        self.vel_command_b[env_ids, 1] = 0.0
+
+        stand_mask = modes == 0
+        straight_mask = modes == 1
+        spin_mask = modes == 2
+        arc_mask = modes == 3
+
+        local_ids = torch.as_tensor(env_ids, device=self.device)
+        self.vel_command_b[local_ids[stand_mask], :] = 0.0
+
+        self.vel_command_b[local_ids[straight_mask], 0] = _sample_nonzero_uniform(
+            straight_mask.sum(), self.cfg.ranges.lin_vel_x, self.cfg.min_lin_vel_x, self.device
+        )
+        self.vel_command_b[local_ids[straight_mask], 2] = 0.0
+
+        self.vel_command_b[local_ids[spin_mask], 0] = 0.0
+        self.vel_command_b[local_ids[spin_mask], 2] = _sample_nonzero_uniform(
+            spin_mask.sum(), self.cfg.ranges.ang_vel_z, self.cfg.min_ang_vel_z, self.device
+        )
+
+        self.vel_command_b[local_ids[arc_mask], 0] = _sample_nonzero_uniform(
+            arc_mask.sum(), self.cfg.ranges.lin_vel_x, self.cfg.min_lin_vel_x, self.device
+        )
+        self.vel_command_b[local_ids[arc_mask], 2] = _sample_nonzero_uniform(
+            arc_mask.sum(), self.cfg.ranges.ang_vel_z, self.cfg.min_ang_vel_z, self.device
+        )
+
+
+@configclass
+class MixedModeVelocityCommandCfg(UniformThresholdVelocityCommandCfg):
+    """Configuration for explicit WL VMC command modes.
+
+    Mode order is: standing, straight, in-place spin, arc turn.
+    """
+
+    class_type: type = MixedModeVelocityCommand
+
+    mode_probabilities: tuple[float, float, float, float] = (0.1, 0.3, 0.3, 0.3)
+    min_lin_vel_x: float = 0.15
+    min_ang_vel_z: float = 0.25
 
 
 class DiscreteCommandController(CommandTerm):
