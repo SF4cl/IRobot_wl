@@ -72,10 +72,12 @@ class WLVMCVanillaActionsCfg:
     action_scale_vel: float = 12.0
 
     # Wheel control
-    wheel_damping: float = 0.08  # damping for wheel velocity PD [Nm*s/rad]
+    wheel_damping: float = 0.10  # damping for wheel velocity PD [Nm*s/rad]
 
     # Action clipping
     clip_actions: float = 100.0
+    clip_leg_actions: float = 3.0
+    clip_wheel_actions: float = 1.3262599469496021
 
 
 # ============================================================================ #
@@ -142,8 +144,10 @@ class WLVMCControlActionsCfg:
         action_scale_theta=0.5,
         action_scale_l0=0.1,
         action_scale_vel=12.0,
-        wheel_damping=0.08,
+        wheel_damping=0.10,
         clip_actions=100.0,
+        clip_leg_actions=3.0,
+        clip_wheel_actions=1.3262599469496021,
         # Full articulation joint order is [lf0, rf0, lf1, rf1, l_wheel, r_wheel].
         torque_limits=[30.0, 30.0, 30.0, 30.0, 4.0, 4.0],
         randomize_action_delay=True,
@@ -587,6 +591,8 @@ class WLVMCVanillaRoughEnvCfg(LocomotionVelocityRoughEnvCfg):
         self.actions.vmc.action_scale_vel = self.vmc_actions.action_scale_vel
         self.actions.vmc.wheel_damping = self.vmc_actions.wheel_damping
         self.actions.vmc.clip_actions = self.vmc_actions.clip_actions
+        self.actions.vmc.clip_leg_actions = self.vmc_actions.clip_leg_actions
+        self.actions.vmc.clip_wheel_actions = self.vmc_actions.clip_wheel_actions
         self.actions.vmc.randomize_vmc_gains = True
         self.actions.vmc.randomize_action_delay = True
         self.actions.vmc.action_delay_ms_range = (0.0, 10.0)

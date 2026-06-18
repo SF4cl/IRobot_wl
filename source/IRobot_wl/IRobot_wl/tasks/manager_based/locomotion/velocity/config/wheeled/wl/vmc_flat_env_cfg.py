@@ -35,18 +35,22 @@ class WLVMCVanillaFlatEnvCfg(WLVMCVanillaRoughEnvCfg):
         self.actions.vmc.l0_offset = 0.17
         self.vmc_actions.action_scale_vel = 52.0
         self.actions.vmc.action_scale_vel = 52.0
-        self.vmc_actions.wheel_damping = 0.08
-        self.actions.vmc.wheel_damping = 0.08
+        self.vmc_actions.wheel_damping = 0.10
+        self.actions.vmc.wheel_damping = 0.10
+        self.vmc_actions.clip_leg_actions = 3.0
+        self.actions.vmc.clip_leg_actions = 3.0
+        self.vmc_actions.clip_wheel_actions = 1.3262599469496021
+        self.actions.vmc.clip_wheel_actions = 1.3262599469496021
 
         # Disable feet_distance_y_exp: wheel Y is constant (kinematic invariant),
         # the policy cannot control it through actions.
         self.rewards.feet_distance_y_exp.weight = 0.0
 
-        self.rewards.vmc_action_symmetry.weight = -0.1
+        self.rewards.vmc_action_symmetry.weight = -0.15
         self.rewards.vmc_action_symmetry.params["wheel_scale"] = 0.0
         self.rewards.nominal_state.weight = -0.05
         self.rewards.leg_length_symmetry.weight = -1.0
-        self.rewards.leg_angle_symmetry.weight = -1.0
+        self.rewards.leg_angle_symmetry.weight = -1.5
         self.rewards.action_rate_l2.weight = -0.005
         self.rewards.joint_pos_penalty.weight = -0.1
         self.rewards.stand_still.weight = -0.5

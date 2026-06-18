@@ -410,8 +410,10 @@ class WLVMCAction(ActionTerm):
     def process_actions(self, actions: torch.Tensor):
         self._previous_previous_actions[:] = self._previous_actions
         self._previous_actions[:] = self._processed_actions
-        self._raw_actions[:] = torch.clamp(actions, -self.cfg.clip_actions, self.cfg.clip_actions)
+        self._raw_actions[:] = actions
         self._processed_actions[:] = self._raw_actions
+        self._processed_actions[:, [0, 1, 3, 4]].clamp_(-self.cfg.clip_leg_actions, self.cfg.clip_leg_actions)
+        self._processed_actions[:, [2, 5]].clamp_(-self.cfg.clip_wheel_actions, self.cfg.clip_wheel_actions)
 
     def apply_actions(self):
         self._action_fifo[:, 1:, :] = self._action_fifo[:, :-1, :].clone()
@@ -491,6 +493,8 @@ class WLVMCActionCfg(ActionTermCfg):
     action_scale_vel: float = 10.0
     wheel_damping: float = 0.05
     clip_actions: float = 100.0
+    clip_leg_actions: float = 3.0
+    clip_wheel_actions: float = 3.0
     # Full articulation joint order is [lf0, rf0, lf1, rf1, l_wheel, r_wheel].
     torque_limits: list[float] = [30.0, 30.0, 30.0, 30.0, 4.0, 4.0]
 
