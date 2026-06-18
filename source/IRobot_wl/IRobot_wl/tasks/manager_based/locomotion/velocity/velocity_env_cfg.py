@@ -261,8 +261,8 @@ class EventCfg:
         mode="startup",
         params={
             "asset_cfg": SceneEntityCfg("robot", body_names=".*"),
-            "static_friction_range": (0.3, 1.0),
-            "dynamic_friction_range": (0.3, 0.8),
+            "static_friction_range": (0.2, 1.5),
+            "dynamic_friction_range": (0.2, 1.2),
             "restitution_range": (0.0, 0.5),
             "num_buckets": 64,
         },
@@ -273,7 +273,7 @@ class EventCfg:
         mode="startup",
         params={
             "asset_cfg": SceneEntityCfg("robot", body_names=""),
-            "mass_distribution_params": (-1.0, 3.0),
+            "mass_distribution_params": (-2.0, 3.0),
             "operation": "add",
             "recompute_inertia": True,
         },
@@ -290,16 +290,15 @@ class EventCfg:
         },
     )
 
-    # Skip: inertia updated via mass randomization by setting recompute_inertia=True
-    # randomize_rigid_body_inertia = EventTerm(
-    #     func=mdp.randomize_rigid_body_inertia,
-    #     mode="startup",
-    #     params={
-    #         "asset_cfg": SceneEntityCfg("robot", body_names=".*"),
-    #         "inertia_distribution_params": (0.5, 1.5),
-    #         "operation": "scale",
-    #     },
-    # )
+    randomize_rigid_body_inertia = EventTerm(
+        func=mdp.randomize_rigid_body_inertia,
+        mode="startup",
+        params={
+            "asset_cfg": SceneEntityCfg("robot", body_names=".*"),
+            "inertia_distribution_params": (0.8, 1.2),
+            "operation": "scale",
+        },
+    )
 
     randomize_com_positions = EventTerm(
         func=mdp.randomize_rigid_body_com,
@@ -322,11 +321,11 @@ class EventCfg:
     )
 
     randomize_reset_joints = EventTerm(
-        func=mdp.reset_joints_by_scale,
-        # func=mdp.reset_joints_by_offset,
+        func=mdp.reset_joints_by_offset,
         mode="reset",
         params={
-            "position_range": (1.0, 1.0),
+            "asset_cfg": SceneEntityCfg("robot", joint_names=".*"),
+            "position_range": (-0.05, 0.05),
             "velocity_range": (0.0, 0.0),
         },
     )
@@ -363,8 +362,8 @@ class EventCfg:
     randomize_push_robot = EventTerm(
         func=mdp.push_by_setting_velocity,
         mode="interval",
-        interval_range_s=(10.0, 15.0),
-        params={"velocity_range": {"x": (-0.5, 0.5), "y": (-0.5, 0.5)}},
+        interval_range_s=(7.0, 10.0),
+        params={"velocity_range": {"x": (-1.0, 1.0), "y": (-1.0, 1.0)}},
     )
 
 

@@ -587,17 +587,21 @@ class WLVMCVanillaRoughEnvCfg(LocomotionVelocityRoughEnvCfg):
         self.actions.vmc.action_scale_vel = self.vmc_actions.action_scale_vel
         self.actions.vmc.wheel_damping = self.vmc_actions.wheel_damping
         self.actions.vmc.clip_actions = self.vmc_actions.clip_actions
-        self.actions.vmc.randomize_action_delay = False
-        self.actions.vmc.action_delay_ms_range = (0.0, 0.0)
+        self.actions.vmc.randomize_vmc_gains = True
+        self.actions.vmc.randomize_action_delay = True
+        self.actions.vmc.action_delay_ms_range = (0.0, 10.0)
 
         # ------------------------------Events------------------------------
-        self.events.randomize_rigid_body_material = None
-        self.events.randomize_rigid_body_mass_base = None
-        self.events.randomize_rigid_body_mass_others = None
-        self.events.randomize_com_positions = None
-        self.events.randomize_apply_external_force_torque = None
-        self.events.randomize_actuator_gains = None
-        self.events.randomize_push_robot = None
+        self.events.randomize_rigid_body_material.params["asset_cfg"].body_names = ".*"
+        self.events.randomize_rigid_body_mass_base.params["asset_cfg"].body_names = [self.base_link_name]
+        self.events.randomize_rigid_body_mass_others.params["asset_cfg"].body_names = [
+            "lf0_Link", "lf1_Link", "l_wheel_Link", "rf0_Link", "rf1_Link", "r_wheel_Link"
+        ]
+        self.events.randomize_rigid_body_inertia.params["asset_cfg"].body_names = ".*"
+        self.events.randomize_com_positions.params["asset_cfg"].body_names = [self.base_link_name]
+        self.events.randomize_apply_external_force_torque.params["asset_cfg"].body_names = [self.base_link_name]
+        self.events.randomize_reset_joints.params["asset_cfg"].joint_names = self.joint_names
+        self.events.randomize_actuator_gains.params["asset_cfg"].joint_names = self.joint_names
 
         # ------------------------------Rewards------------------------------
         # General
