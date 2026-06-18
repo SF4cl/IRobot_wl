@@ -79,9 +79,11 @@ class WLVMCVanillaFlatEnvCfg(WLVMCVanillaRoughEnvCfg):
         self.curriculum.command_levels_lin_vel.params["range_multiplier"] = (0.3, 1.0)
         self.curriculum.command_levels_lin_vel.params["threshold"] = 0.4
         self.curriculum.command_levels_lin_vel.params["step_size"] = 0.1
+        self.curriculum.command_levels_lin_vel.params["update_interval_s"] = 20.0
         self.curriculum.command_levels_ang_vel.params["range_multiplier"] = (0.4, 1.0)
         self.curriculum.command_levels_ang_vel.params["threshold"] = 0.4
         self.curriculum.command_levels_ang_vel.params["step_size"] = 0.1
+        self.curriculum.command_levels_ang_vel.params["update_interval_s"] = 20.0
 
         # If the weight of rewards is 0, set rewards to None
         if self.__class__.__name__ == "WLVMCVanillaFlatEnvCfg":

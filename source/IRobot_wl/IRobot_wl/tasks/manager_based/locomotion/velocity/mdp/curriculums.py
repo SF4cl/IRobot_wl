@@ -22,11 +22,14 @@ def command_levels_lin_vel(
     range_multiplier: Sequence[float] = (0.1, 1.0),
     threshold: float = 0.8,
     step_size: float = 0.1,
+    update_interval_s: float | None = None,
 ) -> None:
     """command_levels_lin_vel"""
     base_velocity_ranges = env.command_manager.get_term("base_velocity").cfg.ranges
-    # Get original velocity ranges (ONLY ON FIRST EPISODE)
-    if env.common_step_counter == 0:
+    # Get original velocity ranges only once. Curriculum terms can be evaluated
+    # more than once while common_step_counter is still 0 during environment
+    # setup, so common_step_counter alone would repeatedly shrink the range.
+    if not hasattr(env, "_original_vel_x"):
         env._original_vel_x = torch.tensor(base_velocity_ranges.lin_vel_x, device=env.device)
         env._original_vel_y = torch.tensor(base_velocity_ranges.lin_vel_y, device=env.device)
         env._initial_vel_x = env._original_vel_x * range_multiplier[0]
@@ -38,8 +41,12 @@ def command_levels_lin_vel(
         base_velocity_ranges.lin_vel_x = env._initial_vel_x.tolist()
         base_velocity_ranges.lin_vel_y = env._initial_vel_y.tolist()
 
+    update_interval = env.max_episode_length
+    if update_interval_s is not None:
+        update_interval = max(1, int(round(update_interval_s / env.step_dt)))
+
     # avoid updating command curriculum at each step since the maximum command is common to all envs
-    if env.common_step_counter % env.max_episode_length == 0:
+    if env.common_step_counter > 0 and env.common_step_counter % update_interval == 0:
         episode_sums = env.reward_manager._episode_sums[reward_term_name]
         reward_term_cfg = env.reward_manager.get_term_cfg(reward_term_name)
         vel_x = torch.tensor(base_velocity_ranges.lin_vel_x, device=env.device)
@@ -68,11 +75,13 @@ def command_levels_ang_vel(
     range_multiplier: Sequence[float] = (0.1, 1.0),
     threshold: float = 0.8,
     step_size: float = 0.1,
+    update_interval_s: float | None = None,
 ) -> None:
     """command_levels_ang_vel"""
     base_velocity_ranges = env.command_manager.get_term("base_velocity").cfg.ranges
-    # Get original angular velocity ranges (ONLY ON FIRST EPISODE)
-    if env.common_step_counter == 0:
+    # Get original angular velocity range only once. See the linear velocity
+    # curriculum above for why common_step_counter == 0 is not sufficient.
+    if not hasattr(env, "_original_ang_vel_z"):
         env._original_ang_vel_z = torch.tensor(base_velocity_ranges.ang_vel_z, device=env.device)
         env._initial_ang_vel_z = env._original_ang_vel_z * range_multiplier[0]
         env._final_ang_vel_z = env._original_ang_vel_z * range_multiplier[1]
@@ -80,8 +89,12 @@ def command_levels_ang_vel(
         # Initialize command ranges to initial values
         base_velocity_ranges.ang_vel_z = env._initial_ang_vel_z.tolist()
 
+    update_interval = env.max_episode_length
+    if update_interval_s is not None:
+        update_interval = max(1, int(round(update_interval_s / env.step_dt)))
+
     # avoid updating command curriculum at each step since the maximum command is common to all envs
-    if env.common_step_counter % env.max_episode_length == 0:
+    if env.common_step_counter > 0 and env.common_step_counter % update_interval == 0:
         episode_sums = env.reward_manager._episode_sums[reward_term_name]
         reward_term_cfg = env.reward_manager.get_term_cfg(reward_term_name)
         ang_vel_z = torch.tensor(base_velocity_ranges.ang_vel_z, device=env.device)
