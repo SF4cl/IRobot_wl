@@ -136,6 +136,7 @@ class WlSequenceRunner:
         base_lin_vel = self._robot.data.root_lin_vel_b
         base_ang_vel = self._robot.data.root_ang_vel_b
         commands = self.env.unwrapped.command_manager.get_command("base_velocity")
+        command_ranges = self.env.unwrapped.command_manager.get_term("base_velocity").cfg.ranges
         projected_gravity = self._robot.data.projected_gravity_b
 
         # VMC task-space state
@@ -217,6 +218,8 @@ class WlSequenceRunner:
             "command_lin_x_abs_max": commands[:, 0].abs().max(),
             "command_ang_z_abs_mean": commands[:, 2].abs().mean(),
             "command_ang_z_abs_max": commands[:, 2].abs().max(),
+            "command_lin_x_range": torch.tensor(command_ranges.lin_vel_x, device=commands.device, dtype=commands.dtype),
+            "command_ang_z_range": torch.tensor(command_ranges.ang_vel_z, device=commands.device, dtype=commands.dtype),
             "lin_x_error_abs_mean": (commands[:, 0] - base_lin_vel[:, 0]).abs().mean(),
             "lin_x_error_abs_max": (commands[:, 0] - base_lin_vel[:, 0]).abs().max(),
             "ang_z_error_abs_mean": (commands[:, 2] - base_ang_vel[:, 2]).abs().mean(),
@@ -304,12 +307,14 @@ class WlSequenceRunner:
             "command_tracking": {
                 "command_lin_x_abs_mean": self._as_float(leg_stats["command_lin_x_abs_mean"]),
                 "command_lin_x_abs_max": self._as_float(leg_stats["command_lin_x_abs_max"]),
+                "command_lin_x_range": self._as_list(leg_stats["command_lin_x_range"]),
                 "actual_lin_x_mean": self._as_float(leg_stats["base_lin_x_mean"]),
                 "actual_lin_x_abs_mean": self._as_float(leg_stats["base_lin_x_abs_mean"]),
                 "lin_x_error_abs_mean": self._as_float(leg_stats["lin_x_error_abs_mean"]),
                 "lin_x_error_abs_max": self._as_float(leg_stats["lin_x_error_abs_max"]),
                 "command_ang_z_abs_mean": self._as_float(leg_stats["command_ang_z_abs_mean"]),
                 "command_ang_z_abs_max": self._as_float(leg_stats["command_ang_z_abs_max"]),
+                "command_ang_z_range": self._as_list(leg_stats["command_ang_z_range"]),
                 "actual_ang_z_mean": self._as_float(leg_stats["base_ang_z_mean"]),
                 "actual_ang_z_abs_mean": self._as_float(leg_stats["base_ang_z_abs_mean"]),
                 "ang_z_error_abs_mean": self._as_float(leg_stats["ang_z_error_abs_mean"]),
@@ -377,8 +382,10 @@ class WlSequenceRunner:
             "Diagnostics/wheel_action_sat_frac_0p95": leg_stats["wheel_action_sat_frac_0p95"],
             "Diagnostics/lin_x_error_abs_mean": leg_stats["lin_x_error_abs_mean"],
             "Diagnostics/lin_x_error_abs_max": leg_stats["lin_x_error_abs_max"],
+            "Diagnostics/command_lin_x_range_max": leg_stats["command_lin_x_range"][1],
             "Diagnostics/ang_z_error_abs_mean": leg_stats["ang_z_error_abs_mean"],
             "Diagnostics/ang_z_error_abs_max": leg_stats["ang_z_error_abs_max"],
+            "Diagnostics/command_ang_z_range_max": leg_stats["command_ang_z_range"][1],
             "Diagnostics/wheel_vel_abs_mean_rad_s": leg_stats["wheel_vel_abs_mean"],
             "Diagnostics/wheel_vel_abs_max_rad_s": leg_stats["wheel_vel_abs_max"],
             "Diagnostics/wheel_vel_ref_abs_mean_rad_s": leg_stats["wheel_vel_ref_abs_mean"],

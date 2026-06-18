@@ -23,6 +23,8 @@ def _sample_nonzero_uniform(count: torch.Tensor | int, value_range: tuple[float,
     values = torch.empty(count_int, device=device).uniform_(*value_range)
     if min_abs <= 0.0:
         return values
+    max_abs = max(abs(value_range[0]), abs(value_range[1]))
+    min_abs = min(min_abs, max_abs)
     signs = torch.where(values >= 0.0, 1.0, -1.0)
     zero_signs = torch.where(torch.rand(count_int, device=device) >= 0.5, 1.0, -1.0)
     signs = torch.where(values == 0.0, zero_signs, signs)

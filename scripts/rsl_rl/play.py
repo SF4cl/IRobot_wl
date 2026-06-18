@@ -144,6 +144,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     env_cfg.curriculum.command_levels_ang_vel = None
 
     keyboard_controller = None
+    keyboard_command_cache = {"step": None, "raw": None, "obs": None}
     if args_cli.keyboard:
         env_cfg.scene.num_envs = 1
         env_cfg.terminations.time_out = None
@@ -158,20 +159,48 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         print(keyboard_controller)
 
         def keyboard_vmc_command_obs(env):
-            keyboard_cmd = keyboard_controller.advance().to(env.device).unsqueeze(0)
+            step = int(getattr(env, "common_step_counter", 0))
+            if keyboard_command_cache["step"] != step or keyboard_command_cache["obs"] is None:
+                keyboard_cmd = keyboard_controller.advance().to(env.device).unsqueeze(0)
+                command = torch.zeros((env.num_envs, 3), device=env.device, dtype=keyboard_cmd.dtype)
+                command[:, 0] = keyboard_cmd[:, 0]
+                command[:, 2] = keyboard_cmd[:, 2]
+
+                # Keep the command manager in sync so debug arrows, logging, and
+                # any command-dependent terms see the same command as the policy.
+                command_term = env.command_manager.get_term("base_velocity")
+                if hasattr(command_term, "vel_command_b"):
+                    command_term.vel_command_b[:] = command
+                if hasattr(command_term, "is_standing_env"):
+                    command_term.is_standing_env[:] = torch.linalg.norm(command[:, [0, 2]], dim=1) < 1.0e-6
+                if hasattr(command_term, "is_heading_env"):
+                    command_term.is_heading_env[:] = False
+
+                keyboard_command_cache["step"] = step
+                keyboard_command_cache["raw"] = keyboard_cmd
+                if hasattr(env.cfg, "vmc_actions"):
+                    height_cmd = torch.full_like(command[:, 0], 0.23)
+                    keyboard_command_cache["obs"] = torch.stack(
+                        [command[:, 0] * 2.0, command[:, 2] * 0.25, height_cmd * 5.0],
+                        dim=1,
+                    )
+                else:
+                    keyboard_command_cache["obs"] = command
             # VMC policies were trained with [lin_x * 2, yaw * 0.25, height * 5],
             # not raw SE(2) [vx, vy, omega].
-            if hasattr(env.cfg, "vmc_actions"):
-                height_cmd = torch.full_like(keyboard_cmd[:, 0], 0.23)
-                return torch.stack(
-                    [keyboard_cmd[:, 0] * 2.0, keyboard_cmd[:, 2] * 0.25, height_cmd * 5.0],
-                    dim=1,
-                )
-            return keyboard_cmd
+            return keyboard_command_cache["obs"]
 
         env_cfg.observations.policy.velocity_commands = ObsTerm(
             func=keyboard_vmc_command_obs,
         )
+        if hasattr(env_cfg.observations, "policy_history"):
+            env_cfg.observations.policy_history.velocity_commands = ObsTerm(
+                func=keyboard_vmc_command_obs,
+            )
+        if hasattr(env_cfg.observations, "critic"):
+            env_cfg.observations.critic.velocity_commands = ObsTerm(
+                func=keyboard_vmc_command_obs,
+            )
 
     # specify directory for logging experiments
     log_root_path = os.path.join("logs", "rsl_rl", agent_cfg.experiment_name)
@@ -287,7 +316,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         base_lin_vel = robot.data.root_lin_vel_b
         base_ang_vel = robot.data.root_ang_vel_b
         commands = env.unwrapped.command_manager.get_command("base_velocity")
-        keyboard_cmd = keyboard_controller.advance().unsqueeze(0) if keyboard_controller is not None else None
+        keyboard_cmd = keyboard_command_cache["raw"] if keyboard_controller is not None else None
 
         wheel_vel = dof_vel[:, _wheel_joint_ids]
         vmc_wheel_vel = wheel_vel

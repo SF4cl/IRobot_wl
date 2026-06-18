@@ -16,6 +16,7 @@ class WLVMCVanillaFlatEnvCfg(WLVMCVanillaRoughEnvCfg):
 
         # spread out environments for better visualization
         self.scene.env_spacing = 4.0
+        self.episode_length_s = 40.0
 
         # override rewards
         self.rewards.base_height_l2.weight = -0.5
@@ -74,6 +75,13 @@ class WLVMCVanillaFlatEnvCfg(WLVMCVanillaRoughEnvCfg):
         self.commands.base_velocity.heading_command = False
         self.commands.base_velocity.rel_heading_envs = 0.0
         self.commands.base_velocity.rel_standing_envs = 0.0
+
+        self.curriculum.command_levels_lin_vel.params["range_multiplier"] = (0.3, 1.0)
+        self.curriculum.command_levels_lin_vel.params["threshold"] = 0.4
+        self.curriculum.command_levels_lin_vel.params["step_size"] = 0.1
+        self.curriculum.command_levels_ang_vel.params["range_multiplier"] = (0.4, 1.0)
+        self.curriculum.command_levels_ang_vel.params["threshold"] = 0.4
+        self.curriculum.command_levels_ang_vel.params["step_size"] = 0.1
 
         # If the weight of rewards is 0, set rewards to None
         if self.__class__.__name__ == "WLVMCVanillaFlatEnvCfg":
