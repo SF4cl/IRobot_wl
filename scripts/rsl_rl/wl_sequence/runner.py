@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import statistics
 import time
@@ -20,6 +21,7 @@ class WlSequenceRunner:
         self.device = device
         self.log_dir = log_dir
         self.writer = None
+        self._diagnostics_path = os.path.join(log_dir, "diagnostics.jsonl") if log_dir is not None else None
         self.current_learning_iteration = 0
         self.tot_timesteps = 0
         self.tot_time = 0.0
@@ -108,6 +110,14 @@ class WlSequenceRunner:
         values = [f"{v:.{precision}f}" for v in tensor.detach().cpu().tolist()]
         return "[" + ", ".join(values) + "]"
 
+    def _as_float(self, value) -> float:
+        if isinstance(value, torch.Tensor):
+            return float(value.detach().mean().cpu().item())
+        return float(value)
+
+    def _as_list(self, tensor: torch.Tensor) -> list[float]:
+        return [float(v) for v in tensor.detach().cpu().tolist()]
+
     def _leg_debug_stats(self) -> dict[str, torch.Tensor]:
         actions = self.env.unwrapped.action_manager.action
         torques = self._robot.data.applied_torque
@@ -126,6 +136,7 @@ class WlSequenceRunner:
         base_lin_vel = self._robot.data.root_lin_vel_b
         base_ang_vel = self._robot.data.root_ang_vel_b
         commands = self.env.unwrapped.command_manager.get_command("base_velocity")
+        projected_gravity = self._robot.data.projected_gravity_b
 
         # VMC task-space state
         from IRobot_wl.tasks.manager_based.locomotion.velocity.mdp.vmc import compute_vmc_state
@@ -146,14 +157,53 @@ class WlSequenceRunner:
         theta0_ref = torch.stack([actions[:, 0], actions[:, 3]], dim=1) * vmc_cfg.action_scale_theta + vmc_cfg.theta0_offset
         l0_ref = torch.stack([actions[:, 1], actions[:, 4]], dim=1) * vmc_cfg.action_scale_l0 + vmc_cfg.l0_offset
         wheel_vel_ref = torch.stack([actions[:, 2], actions[:, 5]], dim=1) * vmc_cfg.action_scale_vel
+        wheel_vel_error = wheel_vel_ref - vmc_wheel_vel
+        if hasattr(self._robot.data, "torque_limit"):
+            wheel_torque_limit = self._robot.data.torque_limit[:, self._wheel_joint_ids].mean(dim=0)
+        else:
+            wheel_torque_limit = torch.tensor(
+                self.env.unwrapped.cfg.actions.vmc.torque_limits[-2:],
+                device=wheel_torque.device,
+                dtype=wheel_torque.dtype,
+            )
+        wheel_speed_radius = 0.058
+        if hasattr(self._robot.data, "soft_joint_vel_limits"):
+            wheel_joint_vel_limit = self._robot.data.soft_joint_vel_limits[:, self._wheel_joint_ids]
+        else:
+            wheel_joint_vel_limit = torch.zeros_like(wheel_vel)
+        if hasattr(self._robot.data, "torque_limit"):
+            wheel_asset_torque_limit = self._robot.data.torque_limit[:, self._wheel_joint_ids]
+        else:
+            wheel_asset_torque_limit = wheel_torque_limit.unsqueeze(0).expand_as(wheel_torque)
 
         return {
             "left_action_mean_abs": left_action.abs().mean(dim=0),
             "right_action_mean_abs": right_action.abs().mean(dim=0),
+            "action_abs_mean": actions.abs().mean(),
+            "action_abs_max": actions.abs().max(),
+            "action_sat_frac_0p95": (actions.abs() > 0.95).float().mean(),
+            "wheel_action_abs_mean": torch.stack([actions[:, 2], actions[:, 5]], dim=1).abs().mean(),
+            "wheel_action_sat_frac_0p95": torch.stack([actions[:, 2], actions[:, 5]], dim=1).abs().gt(0.95).float().mean(),
             "left_torque_mean_abs": left_leg_torque.abs().mean(dim=0),
             "right_torque_mean_abs": right_leg_torque.abs().mean(dim=0),
             "wheel_torque_mean_abs": wheel_torque.abs().mean(dim=0),
+            "wheel_torque_abs_mean": wheel_torque.abs().mean(),
+            "wheel_torque_abs_max": wheel_torque.abs().max(),
+            "wheel_torque_limit": wheel_torque_limit,
+            "wheel_torque_sat_frac_0p95": (wheel_torque.abs() > 0.95 * wheel_torque_limit).float().mean(),
+            "wheel_asset_torque_limit_mean": wheel_asset_torque_limit.mean(dim=0),
             "wheel_vel_mean_abs": vmc_wheel_vel.abs().mean(dim=0),
+            "wheel_vel_abs_mean": vmc_wheel_vel.abs().mean(),
+            "wheel_vel_abs_max": vmc_wheel_vel.abs().max(),
+            "wheel_vel_ref_abs_mean": wheel_vel_ref.abs().mean(),
+            "wheel_vel_ref_abs_max": wheel_vel_ref.abs().max(),
+            "wheel_vel_error_abs_mean": wheel_vel_error.abs().mean(),
+            "wheel_vel_error_abs_max": wheel_vel_error.abs().max(),
+            "wheel_joint_vel_limit_mean": wheel_joint_vel_limit.mean(dim=0),
+            "wheel_ground_speed_ref_abs_mean": wheel_vel_ref.abs().mean() * wheel_speed_radius,
+            "wheel_ground_speed_ref_abs_max": wheel_vel_ref.abs().max() * wheel_speed_radius,
+            "wheel_ground_speed_abs_mean": vmc_wheel_vel.abs().mean() * wheel_speed_radius,
+            "wheel_ground_speed_abs_max": vmc_wheel_vel.abs().max() * wheel_speed_radius,
             "left_action_env0": left_action[0],
             "right_action_env0": right_action[0],
             "left_torque_env0": left_leg_torque[0],
@@ -163,12 +213,33 @@ class WlSequenceRunner:
             "base_lin_vel_mean": base_lin_vel.mean(dim=0),
             "base_ang_vel_mean": base_ang_vel.mean(dim=0),
             "commands_mean": commands.mean(dim=0),
+            "command_lin_x_abs_mean": commands[:, 0].abs().mean(),
+            "command_lin_x_abs_max": commands[:, 0].abs().max(),
+            "command_ang_z_abs_mean": commands[:, 2].abs().mean(),
+            "command_ang_z_abs_max": commands[:, 2].abs().max(),
+            "lin_x_error_abs_mean": (commands[:, 0] - base_lin_vel[:, 0]).abs().mean(),
+            "lin_x_error_abs_max": (commands[:, 0] - base_lin_vel[:, 0]).abs().max(),
+            "ang_z_error_abs_mean": (commands[:, 2] - base_ang_vel[:, 2]).abs().mean(),
+            "ang_z_error_abs_max": (commands[:, 2] - base_ang_vel[:, 2]).abs().max(),
+            "base_lin_x_mean": base_lin_vel[:, 0].mean(),
+            "base_lin_x_abs_mean": base_lin_vel[:, 0].abs().mean(),
+            "base_ang_z_mean": base_ang_vel[:, 2].mean(),
+            "base_ang_z_abs_mean": base_ang_vel[:, 2].abs().mean(),
+            "projected_gravity_mean": projected_gravity.mean(dim=0),
+            "tilt_xy_abs_mean": projected_gravity[:, :2].norm(dim=1).mean(),
+            "tilt_xy_abs_max": projected_gravity[:, :2].norm(dim=1).max(),
+            "upright_factor_mean": (torch.clamp(-projected_gravity[:, 2], 0, 0.7) / 0.7).mean(),
             "base_lin_vel_env0": base_lin_vel[0],
+            "base_ang_vel_env0": base_ang_vel[0],
             "commands_env0": commands[0],
             "theta0_mean": vmc_state["theta0"].mean(dim=0),
             "theta0_ref_mean": theta0_ref.mean(dim=0),
+            "theta0_error_abs_mean": (theta0_ref - vmc_state["theta0"]).abs().mean(),
+            "theta0_lr_error_abs_mean": (vmc_state["theta0"][:, 0] - vmc_state["theta0"][:, 1]).abs().mean(),
             "L0_mean": vmc_state["L0"].mean(dim=0),
             "L0_ref_mean": l0_ref.mean(dim=0),
+            "L0_error_abs_mean": (l0_ref - vmc_state["L0"]).abs().mean(),
+            "L0_lr_error_abs_mean": (vmc_state["L0"][:, 0] - vmc_state["L0"][:, 1]).abs().mean(),
             "wheel_vel_ref_mean": wheel_vel_ref.abs().mean(dim=0),
             "theta0_env0": vmc_state["theta0"][0],
             "theta0_ref_env0": theta0_ref[0],
@@ -176,7 +247,165 @@ class WlSequenceRunner:
             "L0_ref_env0": l0_ref[0],
             "joint_wheel_vel_env0": wheel_vel[0],
             "wheel_vel_ref_env0": wheel_vel_ref[0],
+            "wheel_radius": torch.tensor(wheel_speed_radius, device=actions.device),
+            "action_scale_vel": torch.tensor(float(vmc_cfg.action_scale_vel), device=actions.device),
+            "max_wheel_ground_speed_from_action": torch.tensor(
+                float(vmc_cfg.action_scale_vel) * wheel_speed_radius, device=actions.device
+            ),
         }
+
+    def _reward_debug_stats(self) -> dict[str, float]:
+        reward_manager = getattr(self.env.unwrapped, "reward_manager", None)
+        if reward_manager is None or not hasattr(reward_manager, "_episode_sums"):
+            return {}
+
+        stats = {}
+        max_episode_length_s = float(getattr(self.env.unwrapped, "max_episode_length_s", 1.0))
+        for name, value in reward_manager._episode_sums.items():
+            if isinstance(value, torch.Tensor):
+                stats[name] = float((value / max(max_episode_length_s, 1e-6)).detach().mean().cpu().item())
+        return stats
+
+    def _write_diagnostics_jsonl(
+        self,
+        it: int,
+        leg_stats: dict[str, torch.Tensor],
+        reward_stats: dict[str, float],
+        rewbuffer,
+        lenbuffer,
+        mean_value_loss,
+        mean_surrogate_loss,
+        mean_kl,
+        mean_extra_loss,
+        fps: int,
+    ):
+        if self._diagnostics_path is None:
+            return
+        row = {
+            "iteration": int(it),
+            "total_timesteps": int(self.tot_timesteps),
+            "fps": int(fps),
+            "mean_reward": statistics.mean(rewbuffer) if len(rewbuffer) > 0 else None,
+            "mean_episode_length": statistics.mean(lenbuffer) if len(lenbuffer) > 0 else None,
+            "loss": {
+                "value_function": float(mean_value_loss),
+                "surrogate": float(mean_surrogate_loss),
+                "kl": float(mean_kl),
+                "encoder": float(mean_extra_loss),
+            },
+            "policy": {
+                "mean_noise_std": self._as_float(self.alg.actor_critic.std.mean()),
+                "action_abs_mean": self._as_float(leg_stats["action_abs_mean"]),
+                "action_abs_max": self._as_float(leg_stats["action_abs_max"]),
+                "action_sat_frac_0p95": self._as_float(leg_stats["action_sat_frac_0p95"]),
+                "wheel_action_abs_mean": self._as_float(leg_stats["wheel_action_abs_mean"]),
+                "wheel_action_sat_frac_0p95": self._as_float(leg_stats["wheel_action_sat_frac_0p95"]),
+            },
+            "command_tracking": {
+                "command_lin_x_abs_mean": self._as_float(leg_stats["command_lin_x_abs_mean"]),
+                "command_lin_x_abs_max": self._as_float(leg_stats["command_lin_x_abs_max"]),
+                "actual_lin_x_mean": self._as_float(leg_stats["base_lin_x_mean"]),
+                "actual_lin_x_abs_mean": self._as_float(leg_stats["base_lin_x_abs_mean"]),
+                "lin_x_error_abs_mean": self._as_float(leg_stats["lin_x_error_abs_mean"]),
+                "lin_x_error_abs_max": self._as_float(leg_stats["lin_x_error_abs_max"]),
+                "command_ang_z_abs_mean": self._as_float(leg_stats["command_ang_z_abs_mean"]),
+                "command_ang_z_abs_max": self._as_float(leg_stats["command_ang_z_abs_max"]),
+                "actual_ang_z_mean": self._as_float(leg_stats["base_ang_z_mean"]),
+                "actual_ang_z_abs_mean": self._as_float(leg_stats["base_ang_z_abs_mean"]),
+                "ang_z_error_abs_mean": self._as_float(leg_stats["ang_z_error_abs_mean"]),
+                "ang_z_error_abs_max": self._as_float(leg_stats["ang_z_error_abs_max"]),
+            },
+            "wheels": {
+                "radius_m": self._as_float(leg_stats["wheel_radius"]),
+                "action_scale_vel_rad_s": self._as_float(leg_stats["action_scale_vel"]),
+                "max_ground_speed_from_action_m_s": self._as_float(leg_stats["max_wheel_ground_speed_from_action"]),
+                "vel_abs_mean_rad_s": self._as_float(leg_stats["wheel_vel_abs_mean"]),
+                "vel_abs_max_rad_s": self._as_float(leg_stats["wheel_vel_abs_max"]),
+                "vel_ref_abs_mean_rad_s": self._as_float(leg_stats["wheel_vel_ref_abs_mean"]),
+                "vel_ref_abs_max_rad_s": self._as_float(leg_stats["wheel_vel_ref_abs_max"]),
+                "vel_error_abs_mean_rad_s": self._as_float(leg_stats["wheel_vel_error_abs_mean"]),
+                "vel_error_abs_max_rad_s": self._as_float(leg_stats["wheel_vel_error_abs_max"]),
+                "ground_speed_abs_mean_m_s": self._as_float(leg_stats["wheel_ground_speed_abs_mean"]),
+                "ground_speed_abs_max_m_s": self._as_float(leg_stats["wheel_ground_speed_abs_max"]),
+                "ground_speed_ref_abs_mean_m_s": self._as_float(leg_stats["wheel_ground_speed_ref_abs_mean"]),
+                "ground_speed_ref_abs_max_m_s": self._as_float(leg_stats["wheel_ground_speed_ref_abs_max"]),
+                "torque_abs_mean_nm": self._as_float(leg_stats["wheel_torque_abs_mean"]),
+                "torque_abs_max_nm": self._as_float(leg_stats["wheel_torque_abs_max"]),
+                "torque_sat_frac_0p95": self._as_float(leg_stats["wheel_torque_sat_frac_0p95"]),
+                "torque_limit_nm_lr": self._as_list(leg_stats["wheel_torque_limit"]),
+                "asset_torque_limit_nm_lr_mean": self._as_list(leg_stats["wheel_asset_torque_limit_mean"]),
+                "joint_vel_limit_rad_s_lr_mean": self._as_list(leg_stats["wheel_joint_vel_limit_mean"]),
+            },
+            "posture": {
+                "tilt_xy_abs_mean": self._as_float(leg_stats["tilt_xy_abs_mean"]),
+                "tilt_xy_abs_max": self._as_float(leg_stats["tilt_xy_abs_max"]),
+                "upright_factor_mean": self._as_float(leg_stats["upright_factor_mean"]),
+                "projected_gravity_mean": self._as_list(leg_stats["projected_gravity_mean"]),
+                "theta0_error_abs_mean": self._as_float(leg_stats["theta0_error_abs_mean"]),
+                "theta0_lr_error_abs_mean": self._as_float(leg_stats["theta0_lr_error_abs_mean"]),
+                "L0_error_abs_mean": self._as_float(leg_stats["L0_error_abs_mean"]),
+                "L0_lr_error_abs_mean": self._as_float(leg_stats["L0_lr_error_abs_mean"]),
+            },
+            "env0": {
+                "command": self._as_list(leg_stats["commands_env0"]),
+                "base_lin_vel": self._as_list(leg_stats["base_lin_vel_env0"]),
+                "base_ang_vel": self._as_list(leg_stats["base_ang_vel_env0"]),
+                "left_action": self._as_list(leg_stats["left_action_env0"]),
+                "right_action": self._as_list(leg_stats["right_action_env0"]),
+                "wheel_vel": self._as_list(leg_stats["wheel_vel_env0"]),
+                "wheel_vel_ref": self._as_list(leg_stats["wheel_vel_ref_env0"]),
+                "wheel_torque": self._as_list(leg_stats["wheel_torque_env0"]),
+                "theta0": self._as_list(leg_stats["theta0_env0"]),
+                "theta0_ref": self._as_list(leg_stats["theta0_ref_env0"]),
+                "L0": self._as_list(leg_stats["L0_env0"]),
+                "L0_ref": self._as_list(leg_stats["L0_ref_env0"]),
+            },
+            "rewards_per_second": reward_stats,
+        }
+        os.makedirs(os.path.dirname(self._diagnostics_path), exist_ok=True)
+        with open(self._diagnostics_path, "a", encoding="utf-8") as file:
+            file.write(json.dumps(row, sort_keys=True) + "\n")
+
+    def _log_diagnostics_to_tensorboard(
+        self, it: int, leg_stats: dict[str, torch.Tensor], reward_stats: dict[str, float]
+    ):
+        scalars = {
+            "Diagnostics/action_abs_mean": leg_stats["action_abs_mean"],
+            "Diagnostics/action_abs_max": leg_stats["action_abs_max"],
+            "Diagnostics/action_sat_frac_0p95": leg_stats["action_sat_frac_0p95"],
+            "Diagnostics/wheel_action_abs_mean": leg_stats["wheel_action_abs_mean"],
+            "Diagnostics/wheel_action_sat_frac_0p95": leg_stats["wheel_action_sat_frac_0p95"],
+            "Diagnostics/lin_x_error_abs_mean": leg_stats["lin_x_error_abs_mean"],
+            "Diagnostics/lin_x_error_abs_max": leg_stats["lin_x_error_abs_max"],
+            "Diagnostics/ang_z_error_abs_mean": leg_stats["ang_z_error_abs_mean"],
+            "Diagnostics/ang_z_error_abs_max": leg_stats["ang_z_error_abs_max"],
+            "Diagnostics/wheel_vel_abs_mean_rad_s": leg_stats["wheel_vel_abs_mean"],
+            "Diagnostics/wheel_vel_abs_max_rad_s": leg_stats["wheel_vel_abs_max"],
+            "Diagnostics/wheel_vel_ref_abs_mean_rad_s": leg_stats["wheel_vel_ref_abs_mean"],
+            "Diagnostics/wheel_vel_ref_abs_max_rad_s": leg_stats["wheel_vel_ref_abs_max"],
+            "Diagnostics/wheel_vel_error_abs_mean_rad_s": leg_stats["wheel_vel_error_abs_mean"],
+            "Diagnostics/wheel_vel_error_abs_max_rad_s": leg_stats["wheel_vel_error_abs_max"],
+            "Diagnostics/wheel_ground_speed_abs_mean_m_s": leg_stats["wheel_ground_speed_abs_mean"],
+            "Diagnostics/wheel_ground_speed_abs_max_m_s": leg_stats["wheel_ground_speed_abs_max"],
+            "Diagnostics/wheel_ground_speed_ref_abs_mean_m_s": leg_stats["wheel_ground_speed_ref_abs_mean"],
+            "Diagnostics/wheel_ground_speed_ref_abs_max_m_s": leg_stats["wheel_ground_speed_ref_abs_max"],
+            "Diagnostics/wheel_torque_abs_mean_nm": leg_stats["wheel_torque_abs_mean"],
+            "Diagnostics/wheel_torque_abs_max_nm": leg_stats["wheel_torque_abs_max"],
+            "Diagnostics/wheel_torque_sat_frac_0p95": leg_stats["wheel_torque_sat_frac_0p95"],
+            "Diagnostics/tilt_xy_abs_mean": leg_stats["tilt_xy_abs_mean"],
+            "Diagnostics/tilt_xy_abs_max": leg_stats["tilt_xy_abs_max"],
+            "Diagnostics/upright_factor_mean": leg_stats["upright_factor_mean"],
+            "Diagnostics/theta0_error_abs_mean": leg_stats["theta0_error_abs_mean"],
+            "Diagnostics/theta0_lr_error_abs_mean": leg_stats["theta0_lr_error_abs_mean"],
+            "Diagnostics/L0_error_abs_mean": leg_stats["L0_error_abs_mean"],
+            "Diagnostics/L0_lr_error_abs_mean": leg_stats["L0_lr_error_abs_mean"],
+            "Diagnostics/action_scale_vel_rad_s": leg_stats["action_scale_vel"],
+            "Diagnostics/max_wheel_ground_speed_from_action_m_s": leg_stats["max_wheel_ground_speed_from_action"],
+        }
+        for name, value in scalars.items():
+            self.writer.add_scalar(name, self._as_float(value), it)
+        for name, value in reward_stats.items():
+            self.writer.add_scalar(f"RewardDebug/{name}", value, it)
 
     def learn(self, num_learning_iterations, init_at_random_ep_len=False):
         print("[DEBUG][WlSequenceRunner] learn start")
@@ -278,6 +507,20 @@ class WlSequenceRunner:
         if it >= 0:
             eta_seconds = self.tot_time / (it + 1) * max(total_iterations - it - 1, 0)
         leg_stats = self._leg_debug_stats()
+        reward_stats = self._reward_debug_stats()
+        self._log_diagnostics_to_tensorboard(it, leg_stats, reward_stats)
+        self._write_diagnostics_jsonl(
+            it,
+            leg_stats,
+            reward_stats,
+            rewbuffer,
+            lenbuffer,
+            mean_value_loss,
+            mean_surrogate_loss,
+            mean_kl,
+            mean_extra_loss,
+            fps,
+        )
         width = 92
         title = f" Learning iteration {it}/{total_iterations - 1} "
         print("#" * width)

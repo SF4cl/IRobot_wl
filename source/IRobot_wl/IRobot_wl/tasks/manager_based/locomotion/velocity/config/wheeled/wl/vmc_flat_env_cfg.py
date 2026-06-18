@@ -32,8 +32,8 @@ class WLVMCVanillaFlatEnvCfg(WLVMCVanillaRoughEnvCfg):
         # Override default leg length to be shorter for flat terrain
         self.vmc_actions.l0_offset = 0.17
         self.actions.vmc.l0_offset = 0.17
-        self.vmc_actions.action_scale_vel = 12.0
-        self.actions.vmc.action_scale_vel = 12.0
+        self.vmc_actions.action_scale_vel = 52.0
+        self.actions.vmc.action_scale_vel = 52.0
         self.vmc_actions.wheel_damping = 0.08
         self.actions.vmc.wheel_damping = 0.08
 
