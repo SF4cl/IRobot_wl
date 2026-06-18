@@ -16,7 +16,7 @@ class WLVMCVanillaFlatEnvCfg(WLVMCVanillaRoughEnvCfg):
 
         # spread out environments for better visualization
         self.scene.env_spacing = 4.0
-        self.episode_length_s = 40.0
+        self.episode_length_s = 60.0
 
         # override rewards
         self.rewards.base_height_l2.weight = -0.5
