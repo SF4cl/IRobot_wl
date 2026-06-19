@@ -353,3 +353,59 @@ def phase(env: ManagerBasedRLEnv, cycle_time: float) -> torch.Tensor:
     phase = env.episode_length_buf[:, None] * env.step_dt / cycle_time
     phase_tensor = torch.cat([torch.sin(2 * torch.pi * phase), torch.cos(2 * torch.pi * phase)], dim=-1)
     return phase_tensor
+
+
+def recovery_mode_obs(
+    env: ManagerBasedEnv,
+    upright_threshold: float = -0.7,
+    fallen_threshold: float = -0.3,
+) -> torch.Tensor:
+    """Recovery mode flag for policy observation.
+
+    Provides the policy with a continuous signal indicating whether the robot
+    needs to perform stand-up recovery (1.0) or normal locomotion (0.0).
+
+    Args:
+        env: The environment.
+        upright_threshold: Below this proj_gravity_z, flag = 0 (fully upright).
+        fallen_threshold: Above this proj_gravity_z, flag = 1 (fully fallen).
+
+    Returns:
+        Recovery mode flag, shape (num_envs, 1). Range [0, 1].
+    """
+    proj_z = env.scene["robot"].data.projected_gravity_b[:, 2]
+    flag = torch.clamp((proj_z - upright_threshold) / (fallen_threshold - upright_threshold), min=0.0, max=1.0)
+    return flag.unsqueeze(-1)
+
+
+def wl_vmc_commands_with_recovery(
+    env: ManagerBasedEnv,
+    command_name: str,
+    height_command: float = 0.25,
+    lin_vel_scale: float = 2.0,
+    ang_vel_scale: float = 0.25,
+    height_scale: float = 5.0,
+    upright_threshold: float = -0.7,
+    fallen_threshold: float = -0.3,
+) -> torch.Tensor:
+    """WL-Gym command observation with recovery flag appended.
+
+    Same as wl_vmc_commands but appends a recovery mode flag as the 4th dim.
+    Total observation dimension = 4 (lin_vel_x, ang_vel_yaw, base_height_cmd, recovery_flag).
+
+    Args:
+        env: The environment.
+        command_name: Name of the command term.
+        height_command: Target base height [m].
+        lin_vel_scale: Scale for linear velocity.
+        ang_vel_scale: Scale for angular velocity.
+        height_scale: Scale for height command.
+        upright_threshold: Below this proj_gravity_z, recovery_flag = 0.
+        fallen_threshold: Above this proj_gravity_z, recovery_flag = 1.
+
+    Returns:
+        Observation tensor, shape (num_envs, 4).
+    """
+    base_obs = wl_vmc_commands(env, command_name, height_command, lin_vel_scale, ang_vel_scale, height_scale)
+    recovery_flag = recovery_mode_obs(env, upright_threshold, fallen_threshold)
+    return torch.cat([base_obs, recovery_flag], dim=-1)

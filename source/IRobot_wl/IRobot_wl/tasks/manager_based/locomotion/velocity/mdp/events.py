@@ -269,3 +269,171 @@ def reset_root_state_uniform(
         # set into the physics simulation
         asset.write_root_pose_to_sim(torch.cat([positions, orientations], dim=-1), env_ids=non_pit_env_ids)
         asset.write_root_velocity_to_sim(velocities, env_ids=non_pit_env_ids)
+
+
+def reset_root_state_fallen(
+    env: ManagerBasedEnv,
+    env_ids: torch.Tensor,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    pose_range: dict[str, tuple[float, float]] | None = None,
+    velocity_range: dict[str, tuple[float, float]] | None = None,
+    joint_position_range: tuple[float, float] = (-0.5, 0.5),
+    joint_velocity_range: tuple[float, float] = (-1.0, 1.0),
+    fallen_probability: float = 1.0,
+    ground_height_offset: float = 0.05,
+):
+    """Reset the robot to a random fallen pose for stand-up recovery training.
+
+    This function samples random orientations (roll/pitch in fallen ranges) and
+    random joint positions, places the robot near the ground, and sets random
+    velocities to create diverse initial conditions for recovery learning.
+
+    Fall type distribution:
+      - Side fall: large roll (±60° to ±90°), moderate pitch
+      - Front/back fall: large pitch (±60° to ±90°), moderate roll
+      - Tilted: moderate roll and pitch (30° to 60°)
+      - Normal (10%): near-upright for curriculum mixing
+
+    Args:
+        env: The simulation environment.
+        env_ids: Environment indices to reset.
+        asset_cfg: The asset configuration.
+        pose_range: Ranges for root pose randomization. If None, uses fallen defaults.
+        velocity_range: Ranges for root velocity randomization. If None, uses defaults.
+        joint_position_range: (min, max) range for random joint positions [rad].
+        joint_velocity_range: (min, max) range for random joint velocities [rad/s].
+        fallen_probability: Probability that a given env gets a fallen pose (vs normal).
+        ground_height_offset: Extra height offset above ground for the base [m].
+    """
+    asset: Articulation = env.scene[asset_cfg.name]
+    num_envs = len(env_ids)
+
+    # Resolve joint indices: use all joints if not specified
+    raw_ids = asset_cfg.joint_ids
+    if raw_ids is None or (isinstance(raw_ids, slice) and raw_ids == slice(None)):
+        joint_ids = list(range(asset.num_joints))
+    elif isinstance(raw_ids, slice):
+        joint_ids = list(range(asset.num_joints))[raw_ids]
+    else:
+        joint_ids = list(raw_ids)
+    num_joints = len(joint_ids)
+
+    if pose_range is None:
+        pose_range = {
+            "x": (-0.3, 0.3),
+            "y": (-0.3, 0.3),
+            "z": (0.0, 0.0),
+            "roll": (-3.14, 3.14),
+            "pitch": (-3.14, 3.14),
+            "yaw": (-3.14, 3.14),
+        }
+    if velocity_range is None:
+        velocity_range = {
+            "x": (-0.5, 0.5),
+            "y": (-0.5, 0.5),
+            "z": (-0.5, 0.5),
+            "roll": (-0.5, 0.5),
+            "pitch": (-0.5, 0.5),
+            "yaw": (-0.5, 0.5),
+        }
+
+    device = asset.device
+    root_states = asset.data.default_root_state[env_ids].clone()
+
+    # --- Determine which envs get fallen vs normal ---
+    is_fallen = torch.rand(num_envs, device=device) < fallen_probability
+
+    # --- Sample root orientations ---
+    # Fallen orientations: large roll or pitch
+    roll = torch.zeros(num_envs, device=device)
+    pitch = torch.zeros(num_envs, device=device)
+    yaw = torch.zeros(num_envs, device=device)
+
+    if is_fallen.any():
+        n_fallen = is_fallen.sum().item()
+        if n_fallen > 0:
+            # Three fall types with equal probability
+            fall_type = torch.randint(0, 3, (n_fallen,), device=device)
+            fallen_ids = torch.where(is_fallen)[0]
+
+            # Type 0: Side fall (large roll, small pitch)
+            mask = fall_type == 0
+            if mask.any():
+                # Roll: ±60° to ±100° (1.05 to 1.75 rad), random sign
+                roll_mag = math_utils.sample_uniform(1.05, 1.75, (mask.sum().item(),), device=device)
+                roll_sign = torch.sign(math_utils.sample_uniform(-1.0, 1.0, (mask.sum().item(),), device=device))
+                roll[fallen_ids[mask]] = roll_mag * roll_sign
+                pitch[fallen_ids[mask]] = math_utils.sample_uniform(-0.5, 0.5, (mask.sum().item(),), device=device)
+                yaw[fallen_ids[mask]] = math_utils.sample_uniform(-3.14, 3.14, (mask.sum().item(),), device=device)
+
+            # Type 1: Front/back fall (large pitch, small to moderate roll)
+            mask = fall_type == 1
+            if mask.any():
+                pitch_mag = math_utils.sample_uniform(1.05, 1.75, (mask.sum().item(),), device=device)
+                pitch_sign = torch.sign(math_utils.sample_uniform(-1.0, 1.0, (mask.sum().item(),), device=device))
+                pitch[fallen_ids[mask]] = pitch_mag * pitch_sign
+                roll[fallen_ids[mask]] = math_utils.sample_uniform(-0.8, 0.8, (mask.sum().item(),), device=device)
+                yaw[fallen_ids[mask]] = math_utils.sample_uniform(-3.14, 3.14, (mask.sum().item(),), device=device)
+
+            # Type 2: Completely random (any orientation, can be upside-down)
+            mask = fall_type == 2
+            if mask.any():
+                roll[fallen_ids[mask]] = math_utils.sample_uniform(-3.14, 3.14, (mask.sum().item(),), device=device)
+                pitch[fallen_ids[mask]] = math_utils.sample_uniform(-3.14, 3.14, (mask.sum().item(),), device=device)
+                yaw[fallen_ids[mask]] = math_utils.sample_uniform(-3.14, 3.14, (mask.sum().item(),), device=device)
+
+    # Normal envs: small perturbations around upright
+    normal_ids = torch.where(~is_fallen)[0]
+    if len(normal_ids) > 0:
+        roll[normal_ids] = math_utils.sample_uniform(-0.1, 0.1, (len(normal_ids),), device=device)
+        pitch[normal_ids] = math_utils.sample_uniform(-0.1, 0.1, (len(normal_ids),), device=device)
+        yaw[normal_ids] = math_utils.sample_uniform(-3.14, 3.14, (len(normal_ids),), device=device)
+
+    orientations_delta = math_utils.quat_from_euler_xyz(roll, pitch, yaw)
+    orientations = math_utils.quat_mul(root_states[:, 3:7], orientations_delta)
+
+    # --- Sample root positions ---
+    pos_x = math_utils.sample_uniform(
+        pose_range["x"][0], pose_range["x"][1], (num_envs,), device=device
+    )
+    pos_y = math_utils.sample_uniform(
+        pose_range["y"][0], pose_range["y"][1], (num_envs,), device=device
+    )
+    # Base height: close to ground for fallen, target height for normal
+    pos_z_fallen = torch.full((num_envs,), ground_height_offset, device=device)
+    pos_z_normal = root_states[:, 2]  # default height
+    pos_z = torch.where(is_fallen, pos_z_fallen, pos_z_normal)
+
+    positions = root_states[:, 0:3].clone()
+    positions[:, 0] += pos_x
+    positions[:, 1] += pos_y
+    positions[:, 2] = pos_z
+    positions += env.scene.env_origins[env_ids]
+
+    # --- Sample root velocities ---
+    vel_range_list = [velocity_range.get(key, (0.0, 0.0)) for key in ["x", "y", "z", "roll", "pitch", "yaw"]]
+    vel_ranges = torch.tensor(vel_range_list, device=device)
+    vel_samples = math_utils.sample_uniform(
+        vel_ranges[:, 0], vel_ranges[:, 1], (num_envs, 6), device=device
+    )
+    velocities = root_states[:, 7:13] + vel_samples
+
+    # --- Sample random joint positions ---
+    joint_pos = asset.data.default_joint_pos[env_ids].clone()
+    jp_min, jp_max = joint_position_range
+    joint_noise = math_utils.sample_uniform(jp_min, jp_max, (num_envs, num_joints), device=device)
+    joint_pos[:, joint_ids] += joint_noise
+
+    # --- Sample random joint velocities ---
+    jv_min, jv_max = joint_velocity_range
+    joint_vel = math_utils.sample_uniform(jv_min, jv_max, (num_envs, num_joints), device=device)
+
+    # --- Write to simulation ---
+    asset.write_root_pose_to_sim(torch.cat([positions, orientations], dim=-1), env_ids=env_ids)
+    asset.write_root_velocity_to_sim(velocities, env_ids=env_ids)
+    asset.write_joint_state_to_sim(
+        joint_pos[:, joint_ids],
+        joint_vel,
+        joint_ids=joint_ids,
+        env_ids=env_ids,
+    )

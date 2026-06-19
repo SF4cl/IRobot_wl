@@ -53,3 +53,17 @@ gym.register(
         "cusrl_cfg_entry_point": f"{agents.__name__}.vmc_cusrl_ppo_cfg:WLVMCVanillaRoughTrainerCfg",
     },
 )
+
+##
+# VMC Recovery (Stand-up + Locomotion) environment.
+##
+
+gym.register(
+    id="IRobot-WL-Velocity-VMC-Flat-Recovery-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.vmc_flat_recovery_env_cfg:WLVMCVanillaFlatRecoveryEnvCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.vmc_rsl_rl_ppo_recovery_cfg:WLVMCVanillaFlatRecoveryPPORunnerCfg",
+    },
+)

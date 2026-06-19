@@ -1053,3 +1053,257 @@ def torque_limits(
     torque_limits = asset.data.torque_limit[:, asset_cfg.joint_ids]
     out_of_limits = (torch.abs(torques) - torque_limits * soft_ratio).clip(min=0.0)
     return torch.sum(out_of_limits, dim=1)
+
+
+# --------------------------------------------------------------------------- #
+# Stand-up recovery reward functions
+# --------------------------------------------------------------------------- #
+
+
+def is_upright(env: ManagerBasedRLEnv, threshold: float = -0.7) -> torch.Tensor:
+    """Boolean mask: True when the robot is upright enough for locomotion.
+
+    Args:
+        env: The RL environment.
+        threshold: projected_gravity_z threshold below which robot is "upright".
+
+    Returns:
+        Boolean tensor, shape (num_envs,).
+    """
+    return env.scene["robot"].data.projected_gravity_b[:, 2] < threshold
+
+
+def is_fallen(env: ManagerBasedRLEnv, threshold: float = -0.3) -> torch.Tensor:
+    """Boolean mask: True when the robot is clearly fallen and needs recovery.
+
+    Args:
+        env: The RL environment.
+        threshold: projected_gravity_z threshold above which robot is "fallen".
+
+    Returns:
+        Boolean tensor, shape (num_envs,).
+    """
+    return env.scene["robot"].data.projected_gravity_b[:, 2] > threshold
+
+
+def recovery_upright_progress(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Reward progress toward upright posture during recovery.
+
+    Uses exponential kernel on the deviation of projected_gravity_z from -1
+    (perfectly upright). Stronger reward as the robot gets closer to upright.
+
+    Args:
+        env: The RL environment.
+        asset_cfg: The asset configuration.
+
+    Returns:
+        Reward value, shape (num_envs,).
+    """
+    asset: RigidObject = env.scene[asset_cfg.name]
+    # projected_gravity_z = -1 means perfectly upright, 0 means horizontal, 1 means upside-down
+    # We want it as close to -1 as possible
+    upright_error = torch.square(asset.data.projected_gravity_b[:, 2] + 1.0)
+    reward = torch.exp(-upright_error / 0.1)  # std=sqrt(0.1) ≈ 0.316, sensitive kernel
+    return reward
+
+
+def recovery_base_height(
+    env: ManagerBasedRLEnv,
+    target_height: float = 0.23,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Reward increasing base height during stand-up recovery.
+
+    When the robot is fallen, the base is near the ground. This reward
+    encourages lifting the body up toward the target standing height.
+
+    Args:
+        env: The RL environment.
+        target_height: Target standing base height [m].
+        asset_cfg: The asset configuration.
+
+    Returns:
+        Reward value, shape (num_envs,).
+    """
+    asset: RigidObject = env.scene[asset_cfg.name]
+    base_height = asset.data.root_pos_w[:, 2]
+    # Normalize: 1.0 at target height, 0.0 at ground level
+    height_ratio = torch.clamp(base_height / target_height, min=0.0, max=1.0)
+    # Exponential reward: strong push when very low, saturates near target
+    reward = 1.0 - torch.exp(-5.0 * height_ratio)
+    return reward
+
+
+def recovery_leg_extension(
+    env: ManagerBasedRLEnv,
+    leg_joint_names: list[str] | None = None,
+    l1: float = 0.21665632675675972,
+    l2: float = 0.2540023491164531,
+    offset: float = -0.007712217793726145,
+    theta1_offset: float = 0.14299916248023697,
+    theta2_offset: float = 2.406020345452543,
+    l0_min: float = 0.1219258562330587,
+    l0_max: float = 0.3006386827708927,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Reward extending legs to push the body up during stand-up recovery.
+
+    Longer legs help lift the body off the ground. This reward encourages
+    the policy to extend legs toward their maximum length.
+
+    Args:
+        env: The RL environment.
+        leg_joint_names: Leg joint names [hip_l, knee_l, hip_r, knee_r].
+        l1, l2, offset: Kinematic parameters.
+        theta1_offset, theta2_offset: Joint angle offsets.
+        l0_min, l0_max: Reachable leg length bounds.
+        asset_cfg: The asset configuration.
+
+    Returns:
+        Reward value, shape (num_envs,).
+    """
+    from IRobot_wl.tasks.manager_based.locomotion.velocity.mdp.vmc import forward_kinematics
+
+    asset: Articulation = env.scene[asset_cfg.name]
+    if leg_joint_names is None:
+        return torch.zeros(env.num_envs, device=env.device)
+
+    joint_indices = asset.find_joints(leg_joint_names)[0]
+    dof_pos = asset.data.joint_pos[:, joint_indices]
+    theta1 = torch.stack([dof_pos[:, 0] + theta1_offset, -dof_pos[:, 2] + theta1_offset], dim=1)
+    theta2 = torch.stack([dof_pos[:, 1] + theta2_offset, -dof_pos[:, 3] + theta2_offset], dim=1)
+    L0, _ = forward_kinematics(theta1, theta2, l1, l2, offset)
+
+    # Normalize leg length: 0 = min, 1 = max
+    L0_norm = torch.clamp((L0 - l0_min) / (l0_max - l0_min), min=0.0, max=1.0)
+    # Mean across both legs, encourage extension
+    reward = torch.mean(L0_norm, dim=1)
+    return reward
+
+
+def recovery_leg_symmetry(
+    env: ManagerBasedRLEnv,
+    leg_joint_names: list[str] | None = None,
+    l1: float = 0.21665632675675972,
+    l2: float = 0.2540023491164531,
+    offset: float = -0.007712217793726145,
+    theta1_offset: float = 0.14299916248023697,
+    theta2_offset: float = 2.406020345452543,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Penalize left/right leg asymmetry during stand-up recovery.
+
+    Symmetric leg usage is crucial for stable recovery without tipping over.
+
+    Args:
+        env: The RL environment.
+        leg_joint_names: Leg joint names.
+        l1, l2, offset: Kinematic parameters.
+        theta1_offset, theta2_offset: Joint angle offsets.
+        asset_cfg: The asset configuration.
+
+    Returns:
+        Penalty value, shape (num_envs,). Higher = more asymmetric (less reward).
+    """
+    from IRobot_wl.tasks.manager_based.locomotion.velocity.mdp.vmc import forward_kinematics
+
+    asset: Articulation = env.scene[asset_cfg.name]
+    if leg_joint_names is None:
+        return torch.zeros(env.num_envs, device=env.device)
+
+    joint_indices = asset.find_joints(leg_joint_names)[0]
+    dof_pos = asset.data.joint_pos[:, joint_indices]
+    theta1 = torch.stack([dof_pos[:, 0] + theta1_offset, -dof_pos[:, 2] + theta1_offset], dim=1)
+    theta2 = torch.stack([dof_pos[:, 1] + theta2_offset, -dof_pos[:, 3] + theta2_offset], dim=1)
+    L0, theta0 = forward_kinematics(theta1, theta2, l1, l2, offset)
+
+    # Combined asymmetry in both leg length and leg angle
+    length_asym = torch.square(L0[:, 0] - L0[:, 1])
+    angle_asym = torch.square(theta0[:, 0] - theta0[:, 1])
+    return length_asym + angle_asym
+
+
+def recovery_action_smoothness(
+    env: ManagerBasedRLEnv,
+) -> torch.Tensor:
+    """Penalize jerky/aggressive actions during stand-up recovery.
+
+    Smooth actions are more energy-efficient and reduce risk of damage.
+    This is the same as action_rate_l2 but specifically scaled for recovery.
+
+    Returns:
+        Penalty value, shape (num_envs,).
+    """
+    return torch.sum(torch.square(env.action_manager.action - env.action_manager.prev_action), dim=1)
+
+
+def recovery_wheel_assist(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Reward using wheels to assist in stand-up recovery.
+
+    When wheels contact the ground, driving them can help rotate the body
+    toward upright. This reward encourages wheel-ground contact during recovery.
+
+    Args:
+        env: The RL environment.
+        asset_cfg: The asset configuration.
+
+    Returns:
+        Reward value, shape (num_envs,).
+    """
+    asset: RigidObject = env.scene[asset_cfg.name]
+    # Reward having at least some angular velocity when not upright
+    # This encourages active motion rather than staying still while fallen
+    ang_vel_magnitude = torch.linalg.norm(asset.data.root_ang_vel_b[:, :2], dim=1)
+    # More reward for active motion when clearly fallen
+    fallen_mask = is_fallen(env).float()
+    reward = ang_vel_magnitude * fallen_mask
+    # Clamp to prevent excessive spinning
+    reward = torch.clamp(reward, max=5.0)
+    return reward
+
+
+def recovery_mode_flag(
+    env: ManagerBasedRLEnv,
+    upright_threshold: float = -0.7,
+    fallen_threshold: float = -0.3,
+) -> torch.Tensor:
+    """Recovery mode flag for observation: 0 = normal locomotion, 1 = recovery.
+
+    Smoothly interpolates between 0 (upright) and 1 (fallen) based on
+    projected_gravity_z. This gives the policy a continuous signal about
+    its orientation state.
+
+    Args:
+        env: The RL environment.
+        upright_threshold: Below this proj_gravity_z, robot is fully "upright" (flag=0).
+        fallen_threshold: Above this proj_gravity_z, robot is fully "fallen" (flag=1).
+
+    Returns:
+        Recovery mode flag, shape (num_envs, 1). Range [0, 1].
+    """
+    proj_z = env.scene["robot"].data.projected_gravity_b[:, 2]
+    # Linear interpolation between upright_threshold (0) and fallen_threshold (1)
+    flag = torch.clamp((proj_z - upright_threshold) / (fallen_threshold - upright_threshold), min=0.0, max=1.0)
+    return flag.unsqueeze(-1)
+
+
+def upright_factor(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Compute the upright scaling factor used to modulate locomotion rewards.
+
+    Same as the inline clamp used throughout existing rewards, but exposed
+    as a standalone function for reuse in blended reward computation.
+
+    Returns:
+        Scaling factor in [0, 1], shape (num_envs,).
+    """
+    asset: RigidObject = env.scene[asset_cfg.name]
+    return torch.clamp(-asset.data.projected_gravity_b[:, 2], 0, 0.7) / 0.7
