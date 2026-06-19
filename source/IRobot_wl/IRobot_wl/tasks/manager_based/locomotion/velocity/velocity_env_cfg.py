@@ -525,6 +525,9 @@ class RewardsCfg:
     track_ang_vel_z_exp = RewTerm(
         func=mdp.track_ang_vel_z_exp, weight=0.0, params={"command_name": "base_velocity", "std": math.sqrt(0.25)}
     )
+    ang_vel_z_cmd_l2 = RewTerm(
+        func=mdp.ang_vel_z_cmd_l2, weight=0.0, params={"command_name": "base_velocity"}
+    )
     track_lin_vel_enhance = RewTerm(
         func=mdp.track_lin_vel_enhance,
         weight=0.0,

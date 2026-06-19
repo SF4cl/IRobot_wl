@@ -19,19 +19,22 @@ def randomize_rigid_body_inertia(
     env_ids: torch.Tensor | None,
     asset_cfg: SceneEntityCfg,
     inertia_distribution_params: tuple[float, float],
-    operation: Literal["add", "scale", "abs"],
+    operation: Literal["scale"],
     distribution: Literal["uniform", "log_uniform", "gaussian"] = "uniform",
 ):
-    """Randomize the inertia tensors of the bodies by adding, scaling, or setting random values.
+    """Randomize body inertia tensors with a positive uniform scale per body.
 
-    This function allows randomizing only the diagonal inertia tensor components (xx, yy, zz) of the bodies.
-    The function samples random values from the given distribution parameters and adds, scales, or sets the values
-    into the physics simulation based on the operation.
+    The full 3x3 inertia tensor is scaled by one positive factor per
+    environment/body. Scaling the complete tensor preserves positive-definiteness
+    when the source inertia tensor is valid, unlike independently scaling only
+    ``ixx``, ``iyy``, and ``izz`` while leaving off-diagonal terms unchanged.
 
     .. tip::
         This function uses CPU tensors to assign the body inertias. It is recommended to use this function
         only during the initialization of the environment.
     """
+    if operation != "scale":
+        raise NotImplementedError("Safe inertia randomization only supports operation='scale'.")
     # extract the used quantities (to enable type-hinting)
     asset: RigidObject | Articulation = env.scene[asset_cfg.name]
 
@@ -53,19 +56,19 @@ def randomize_rigid_body_inertia(
     # apply randomization on default values
     inertias[env_ids[:, None], body_ids, :] = asset.data.default_inertia[env_ids[:, None], body_ids, :].clone()
 
-    # randomize each diagonal element (xx, yy, zz -> indices 0, 4, 8)
-    for idx in [0, 4, 8]:
-        # Extract and randomize the specific diagonal element
-        randomized_inertias = _randomize_prop_by_op(
-            inertias[:, :, idx],
-            inertia_distribution_params,
-            env_ids,
-            body_ids,
-            operation,
-            distribution,
+    if distribution == "uniform":
+        dist_fn = math_utils.sample_uniform
+    elif distribution == "log_uniform":
+        dist_fn = math_utils.sample_log_uniform
+    elif distribution == "gaussian":
+        dist_fn = math_utils.sample_gaussian
+    else:
+        raise NotImplementedError(
+            f"Unknown distribution: '{distribution}' for inertia randomization."
+            " Please use 'uniform', 'log_uniform', or 'gaussian'."
         )
-        # Assign the randomized values back to the inertia tensor
-        inertias[env_ids[:, None], body_ids, idx] = randomized_inertias
+    scale = dist_fn(*inertia_distribution_params, (len(env_ids), len(body_ids), 1), device=inertias.device)
+    inertias[env_ids[:, None], body_ids, :] *= scale
 
     # set the inertia tensors into the physics simulation
     asset.root_physx_view.set_inertias(inertias, env_ids)

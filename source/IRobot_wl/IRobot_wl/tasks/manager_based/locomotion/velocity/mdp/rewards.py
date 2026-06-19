@@ -45,6 +45,17 @@ def track_ang_vel_z_exp(
     return reward
 
 
+def ang_vel_z_cmd_l2(
+    env: ManagerBasedRLEnv, command_name: str, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")
+) -> torch.Tensor:
+    """Penalize squared yaw-rate tracking error."""
+    asset: RigidObject = env.scene[asset_cfg.name]
+    error = env.command_manager.get_command(command_name)[:, 2] - asset.data.root_ang_vel_b[:, 2]
+    reward = torch.square(error)
+    reward *= torch.clamp(-env.scene["robot"].data.projected_gravity_b[:, 2], 0, 0.7) / 0.7
+    return reward
+
+
 def track_lin_vel_xy_yaw_frame_exp(
     env, std: float, command_name: str, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")
 ) -> torch.Tensor:
@@ -805,11 +816,29 @@ def vmc_action_symmetry(
     wheel_scale: float = 0.25,
 ) -> torch.Tensor:
     """Penalize left/right task-space action mismatch for symmetric gliding."""
-    actions = env.action_manager.action if action_name is None else env.action_manager.get_term(action_name).raw_actions
+    if action_name is None:
+        actions = env.action_manager.action
+    else:
+        action_term = env.action_manager.get_term(action_name)
+        actions = getattr(action_term, "processed_actions", action_term.raw_actions)
     theta_diff = torch.square(actions[:, 0] - actions[:, 3]) * theta_scale
     l0_diff = torch.square(actions[:, 1] - actions[:, 4]) * l0_scale
     wheel_diff = torch.square(actions[:, 2] - actions[:, 5]) * wheel_scale
     reward = theta_diff + l0_diff + wheel_diff
+    reward *= torch.clamp(-env.scene["robot"].data.projected_gravity_b[:, 2], 0, 0.7) / 0.7
+    return reward
+
+
+def vmc_theta_ref_symmetry(
+    env: ManagerBasedRLEnv,
+    action_name: str = "vmc",
+    action_scale_theta: float = 0.5,
+) -> torch.Tensor:
+    """Penalize left/right VMC target leg-angle mismatch after action clipping."""
+    action_term = env.action_manager.get_term(action_name)
+    actions = getattr(action_term, "processed_actions", action_term.raw_actions)
+    theta_ref_diff = (actions[:, 0] - actions[:, 3]) * action_scale_theta
+    reward = torch.square(theta_ref_diff)
     reward *= torch.clamp(-env.scene["robot"].data.projected_gravity_b[:, 2], 0, 0.7) / 0.7
     return reward
 

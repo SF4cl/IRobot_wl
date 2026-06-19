@@ -123,7 +123,9 @@ class WlSequenceRunner:
         return [float(v) for v in tensor.detach().cpu().tolist()]
 
     def _leg_debug_stats(self) -> dict[str, torch.Tensor]:
-        actions = self.env.unwrapped.action_manager.action
+        raw_actions = self.env.unwrapped.action_manager.action
+        action_term = self.env.unwrapped.action_manager.get_term("vmc")
+        actions = getattr(action_term, "processed_actions", raw_actions).clone()
         torques = self._robot.data.applied_torque
         dof_vel = self._robot.data.joint_vel
         dof_pos = self._robot.data.joint_pos
@@ -146,6 +148,10 @@ class WlSequenceRunner:
         # VMC task-space state
         from IRobot_wl.tasks.manager_based.locomotion.velocity.mdp.vmc import compute_vmc_state
         vmc_cfg = self.env.unwrapped.cfg.vmc_actions
+        clip_leg_actions = float(getattr(vmc_cfg, "clip_leg_actions", getattr(vmc_cfg, "clip_actions", 100.0)))
+        clip_wheel_actions = float(getattr(vmc_cfg, "clip_wheel_actions", getattr(vmc_cfg, "clip_actions", 100.0)))
+        actions[:, [0, 1, 3, 4]].clamp_(-clip_leg_actions, clip_leg_actions)
+        actions[:, [2, 5]].clamp_(-clip_wheel_actions, clip_wheel_actions)
         vmc_state = compute_vmc_state(
             dof_pos=dof_pos,
             dof_vel=dof_vel,
@@ -200,8 +206,10 @@ class WlSequenceRunner:
         response_mask = self._steps_since_command_change <= response_window_steps
         base_lin_acc = (base_lin_vel - self._prev_debug_base_lin_vel) / max(step_dt, 1.0e-6)
         base_ang_acc = (base_ang_vel - self._prev_debug_base_ang_vel) / max(step_dt, 1.0e-6)
-        lin_x_error = (commands[:, 0] - base_lin_vel[:, 0]).abs()
-        ang_z_error = (commands[:, 2] - base_ang_vel[:, 2]).abs()
+        lin_x_error_signed = commands[:, 0] - base_lin_vel[:, 0]
+        ang_z_error_signed = commands[:, 2] - base_ang_vel[:, 2]
+        lin_x_error = lin_x_error_signed.abs()
+        ang_z_error = ang_z_error_signed.abs()
         if response_mask.any():
             response_lin_x_error = lin_x_error[response_mask].mean()
             response_ang_z_error = ang_z_error[response_mask].mean()
@@ -216,8 +224,6 @@ class WlSequenceRunner:
 
         leg_actions = torch.stack([actions[:, 0], actions[:, 1], actions[:, 3], actions[:, 4]], dim=1)
         wheel_actions = torch.stack([actions[:, 2], actions[:, 5]], dim=1)
-        clip_leg_actions = float(getattr(vmc_cfg, "clip_leg_actions", getattr(vmc_cfg, "clip_actions", 100.0)))
-        clip_wheel_actions = float(getattr(vmc_cfg, "clip_wheel_actions", getattr(vmc_cfg, "clip_actions", 100.0)))
         leg_sat_threshold = 0.95 * max(clip_leg_actions, 1.0e-6)
         wheel_sat_threshold = 0.95 * max(clip_wheel_actions, 1.0e-6)
 
@@ -226,6 +232,8 @@ class WlSequenceRunner:
             "right_action_mean_abs": right_action.abs().mean(dim=0),
             "action_abs_mean": actions.abs().mean(),
             "action_abs_max": actions.abs().max(),
+            "raw_action_abs_mean": raw_actions.abs().mean(),
+            "raw_action_abs_max": raw_actions.abs().max(),
             "action_sat_frac_0p95": torch.cat(
                 [leg_actions.abs() / max(clip_leg_actions, 1.0e-6), wheel_actions.abs() / max(clip_wheel_actions, 1.0e-6)],
                 dim=1,
@@ -277,8 +285,10 @@ class WlSequenceRunner:
             "command_ang_z_range": torch.tensor(command_ranges.ang_vel_z, device=commands.device, dtype=commands.dtype),
             "lin_x_error_abs_mean": lin_x_error.mean(),
             "lin_x_error_abs_max": lin_x_error.max(),
+            "lin_x_error_signed_mean": lin_x_error_signed.mean(),
             "ang_z_error_abs_mean": ang_z_error.mean(),
             "ang_z_error_abs_max": ang_z_error.max(),
+            "ang_z_error_signed_mean": ang_z_error_signed.mean(),
             "base_lin_x_acc_abs_mean": base_lin_acc[:, 0].abs().mean(),
             "base_lin_x_acc_abs_max": base_lin_acc[:, 0].abs().max(),
             "base_ang_z_acc_abs_mean": base_ang_acc[:, 2].abs().mean(),
@@ -365,6 +375,8 @@ class WlSequenceRunner:
                 "mean_noise_std": self._as_float(self.alg.actor_critic.std.mean()),
                 "action_abs_mean": self._as_float(leg_stats["action_abs_mean"]),
                 "action_abs_max": self._as_float(leg_stats["action_abs_max"]),
+                "raw_action_abs_mean": self._as_float(leg_stats["raw_action_abs_mean"]),
+                "raw_action_abs_max": self._as_float(leg_stats["raw_action_abs_max"]),
                 "action_sat_frac_0p95": self._as_float(leg_stats["action_sat_frac_0p95"]),
                 "leg_action_abs_mean": self._as_float(leg_stats["leg_action_abs_mean"]),
                 "leg_action_sat_frac_0p95": self._as_float(leg_stats["leg_action_sat_frac_0p95"]),
@@ -385,6 +397,7 @@ class WlSequenceRunner:
                 "actual_lin_x_acc_abs_max": self._as_float(leg_stats["base_lin_x_acc_abs_max"]),
                 "lin_x_error_abs_mean": self._as_float(leg_stats["lin_x_error_abs_mean"]),
                 "lin_x_error_abs_max": self._as_float(leg_stats["lin_x_error_abs_max"]),
+                "lin_x_error_signed_mean": self._as_float(leg_stats["lin_x_error_signed_mean"]),
                 "command_ang_z_abs_mean": self._as_float(leg_stats["command_ang_z_abs_mean"]),
                 "command_ang_z_abs_max": self._as_float(leg_stats["command_ang_z_abs_max"]),
                 "command_delta_ang_z_abs_mean": self._as_float(leg_stats["command_delta_ang_z_abs_mean"]),
@@ -396,6 +409,7 @@ class WlSequenceRunner:
                 "actual_ang_z_acc_abs_max": self._as_float(leg_stats["base_ang_z_acc_abs_max"]),
                 "ang_z_error_abs_mean": self._as_float(leg_stats["ang_z_error_abs_mean"]),
                 "ang_z_error_abs_max": self._as_float(leg_stats["ang_z_error_abs_max"]),
+                "ang_z_error_signed_mean": self._as_float(leg_stats["ang_z_error_signed_mean"]),
                 "response_0p5s_env_frac": self._as_float(leg_stats["response_0p5s_env_frac"]),
                 "response_0p5s_lin_x_error_abs_mean": self._as_float(
                     leg_stats["response_0p5s_lin_x_error_abs_mean"]
@@ -462,6 +476,8 @@ class WlSequenceRunner:
         scalars = {
             "Diagnostics/action_abs_mean": leg_stats["action_abs_mean"],
             "Diagnostics/action_abs_max": leg_stats["action_abs_max"],
+            "Diagnostics/raw_action_abs_mean": leg_stats["raw_action_abs_mean"],
+            "Diagnostics/raw_action_abs_max": leg_stats["raw_action_abs_max"],
             "Diagnostics/action_sat_frac_0p95": leg_stats["action_sat_frac_0p95"],
             "Diagnostics/leg_action_abs_mean": leg_stats["leg_action_abs_mean"],
             "Diagnostics/leg_action_sat_frac_0p95": leg_stats["leg_action_sat_frac_0p95"],
@@ -471,6 +487,7 @@ class WlSequenceRunner:
             "Diagnostics/clip_wheel_actions": leg_stats["clip_wheel_actions"],
             "Diagnostics/lin_x_error_abs_mean": leg_stats["lin_x_error_abs_mean"],
             "Diagnostics/lin_x_error_abs_max": leg_stats["lin_x_error_abs_max"],
+            "Diagnostics/lin_x_error_signed_mean": leg_stats["lin_x_error_signed_mean"],
             "Diagnostics/command_delta_lin_x_abs_mean": leg_stats["command_delta_lin_x_abs_mean"],
             "Diagnostics/command_delta_lin_x_abs_max": leg_stats["command_delta_lin_x_abs_max"],
             "Diagnostics/base_lin_x_acc_abs_mean": leg_stats["base_lin_x_acc_abs_mean"],
@@ -479,6 +496,7 @@ class WlSequenceRunner:
             "Diagnostics/command_lin_x_range_max": leg_stats["command_lin_x_range"][1],
             "Diagnostics/ang_z_error_abs_mean": leg_stats["ang_z_error_abs_mean"],
             "Diagnostics/ang_z_error_abs_max": leg_stats["ang_z_error_abs_max"],
+            "Diagnostics/ang_z_error_signed_mean": leg_stats["ang_z_error_signed_mean"],
             "Diagnostics/command_delta_ang_z_abs_mean": leg_stats["command_delta_ang_z_abs_mean"],
             "Diagnostics/command_delta_ang_z_abs_max": leg_stats["command_delta_ang_z_abs_max"],
             "Diagnostics/base_ang_z_acc_abs_mean": leg_stats["base_ang_z_acc_abs_mean"],

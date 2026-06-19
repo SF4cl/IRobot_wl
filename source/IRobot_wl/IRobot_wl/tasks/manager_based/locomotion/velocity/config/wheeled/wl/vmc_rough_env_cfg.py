@@ -72,7 +72,7 @@ class WLVMCVanillaActionsCfg:
     action_scale_vel: float = 12.0
 
     # Wheel control
-    wheel_damping: float = 0.10  # damping for wheel velocity PD [Nm*s/rad]
+    wheel_damping: float = 0.08  # damping for wheel velocity PD [Nm*s/rad]
 
     # Action clipping
     clip_actions: float = 100.0
@@ -144,7 +144,7 @@ class WLVMCControlActionsCfg:
         action_scale_theta=0.5,
         action_scale_l0=0.1,
         action_scale_vel=12.0,
-        wheel_damping=0.10,
+        wheel_damping=0.08,
         clip_actions=100.0,
         clip_leg_actions=3.0,
         clip_wheel_actions=1.3262599469496021,
@@ -506,6 +506,11 @@ class WLVMCVanillaRewardsCfg(RewardsCfg):
         func=mdp.vmc_action_symmetry,
         weight=-0.25,
         params={"action_name": "vmc", "theta_scale": 1.0, "l0_scale": 1.0, "wheel_scale": 0.0},
+    )
+    vmc_theta_ref_symmetry = RewTerm(
+        func=mdp.vmc_theta_ref_symmetry,
+        weight=0.0,
+        params={"action_name": "vmc", "action_scale_theta": 0.5},
     )
     base_height_enhance = RewTerm(
         func=mdp.base_height_enhance,
