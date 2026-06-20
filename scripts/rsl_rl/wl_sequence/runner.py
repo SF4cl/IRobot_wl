@@ -130,8 +130,6 @@ class WlSequenceRunner:
         dof_vel = self._robot.data.joint_vel
         dof_pos = self._robot.data.joint_pos
 
-        left_action = actions[:, :3]
-        right_action = actions[:, 3:6]
         left_leg_torque = torques[:, self._leg_joint_ids[:2]]
         right_leg_torque = torques[:, self._leg_joint_ids[2:4]]
         wheel_torque = torques[:, self._wheel_joint_ids]
@@ -152,6 +150,10 @@ class WlSequenceRunner:
         clip_wheel_actions = float(getattr(vmc_cfg, "clip_wheel_actions", getattr(vmc_cfg, "clip_actions", 100.0)))
         actions[:, [0, 1, 3, 4]].clamp_(-clip_leg_actions, clip_leg_actions)
         actions[:, [2, 5]].clamp_(-clip_wheel_actions, clip_wheel_actions)
+        if float(getattr(vmc_cfg, "action_scale_vel", 0.0)) == 0.0 or clip_wheel_actions <= 0.0:
+            actions[:, [2, 5]] = 0.0
+        left_action = actions[:, :3]
+        right_action = actions[:, 3:6]
         vmc_state = compute_vmc_state(
             dof_pos=dof_pos,
             dof_vel=dof_vel,
@@ -226,6 +228,10 @@ class WlSequenceRunner:
         wheel_actions = torch.stack([actions[:, 2], actions[:, 5]], dim=1)
         leg_sat_threshold = 0.95 * max(clip_leg_actions, 1.0e-6)
         wheel_sat_threshold = 0.95 * max(clip_wheel_actions, 1.0e-6)
+        if clip_wheel_actions <= 0.0:
+            wheel_sat_frac = torch.zeros((), device=actions.device, dtype=actions.dtype)
+        else:
+            wheel_sat_frac = wheel_actions.abs().gt(wheel_sat_threshold).float().mean()
 
         return {
             "left_action_mean_abs": left_action.abs().mean(dim=0),
@@ -241,7 +247,7 @@ class WlSequenceRunner:
             "leg_action_abs_mean": leg_actions.abs().mean(),
             "leg_action_sat_frac_0p95": leg_actions.abs().gt(leg_sat_threshold).float().mean(),
             "wheel_action_abs_mean": wheel_actions.abs().mean(),
-            "wheel_action_sat_frac_0p95": wheel_actions.abs().gt(wheel_sat_threshold).float().mean(),
+            "wheel_action_sat_frac_0p95": wheel_sat_frac,
             "clip_leg_actions": torch.tensor(clip_leg_actions, device=actions.device),
             "clip_wheel_actions": torch.tensor(clip_wheel_actions, device=actions.device),
             "left_torque_mean_abs": left_leg_torque.abs().mean(dim=0),

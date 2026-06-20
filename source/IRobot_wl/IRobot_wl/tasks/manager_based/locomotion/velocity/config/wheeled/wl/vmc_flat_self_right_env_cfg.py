@@ -42,6 +42,12 @@ class WLVMCVanillaFlatSelfRightEnvCfg(WLVMCVanillaFlatEnvCfg):
         # Slightly reduce delay/randomization for the first isolated skill.
         self.actions.vmc.randomize_action_delay = False
 
+        # Self-righting needs a fixed contact point. With free wheel joints the
+        # wheels roll passively, so the legs cannot lever the body upright.
+        wheel_actuator = self.scene.robot.actuators["wheel"]
+        wheel_actuator.damping = 2.0
+        wheel_actuator.friction = 4.0
+
         # ------------------------------Events------------------------------
         self.events.randomize_reset_base = EventTerm(
             func=mdp.reset_root_state_fallen,

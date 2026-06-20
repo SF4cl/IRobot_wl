@@ -276,10 +276,12 @@ find logs/rsl_rl/wl_vmc_flat -maxdepth 2 -type f | grep 'model_.*\.pt' | sort
 ssh -p 37023 root@connect.westc.seetacloud.com
 RCZQCoglue1U
 
-scp -P 37023 -r root@connect.westc.seetacloud.com:/root/autodl-tmp/wl_workspace/IRobot_wl/logs/rsl_rl/wl_vmc_flat_recovery D:\rm\2026_code\rl\IRobot_wl\logs\rsl_rl
+scp -P 37023 -r root@connect.westc.seetacloud.com:~/autodl-tmp/wl_workspace/IRobot_wl/logs/rsl_rl/wl_vmc_flat_self_right/2026-06-20_10-23-13 D:\rm\2026_code\rl\IRobot_wl\logs\rsl_rl\wl_vmc_flat_self_right
 
 python scripts/rsl_rl/train.py --task IRobot-WL-Velocity-VMC-Flat-Recovery-v0 --agent rsl_rl_cfg_entry_point --headless
 
 python scripts/rsl_rl/play.py --task IRobot-WL-Velocity-VMC-Flat-Recovery-v0 --agent rsl_rl_cfg_entry_point --num_envs 32
 
 python scripts/rsl_rl/play.py --task IRobot-WL-Velocity-VMC-Flat-Recovery-v0 --agent rsl_rl_cfg_entry_point --load_run 2026-06-19_19-24-16 --checkpoint model_7250.pt --num_envs 32
+
+python scripts/rsl_rl/play.py --task IRobot-WL-Velocity-VMC-Flat-SelfRight-v0 --agent rsl_rl_cfg_entry_point --num_envs 32

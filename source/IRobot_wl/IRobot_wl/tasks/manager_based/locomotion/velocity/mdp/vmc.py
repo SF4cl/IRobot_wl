@@ -181,16 +181,19 @@ def vmc_torques(
         T2: Knee joint torque, shape (num_envs, num_legs).
     """
     theta0_shifted = theta0 + torch.pi / 2
+    L0_safe = torch.clamp(torch.nan_to_num(L0, nan=0.05, posinf=0.05, neginf=0.05), min=0.05)
 
     # Jacobian transpose elements for the 2-DOF leg
     t11 = l1 * torch.sin(theta0_shifted - theta1) - l2 * torch.sin(theta1 + theta2 - theta0_shifted)
-    t12 = (l1 * torch.cos(theta0_shifted - theta1) - l2 * torch.cos(theta1 + theta2 - theta0_shifted)) / L0
+    t12 = (l1 * torch.cos(theta0_shifted - theta1) - l2 * torch.cos(theta1 + theta2 - theta0_shifted)) / L0_safe
 
     t21 = -l2 * torch.sin(theta1 + theta2 - theta0_shifted)
-    t22 = -l2 * torch.cos(theta1 + theta2 - theta0_shifted) / L0
+    t22 = -l2 * torch.cos(theta1 + theta2 - theta0_shifted) / L0_safe
 
     T1 = t11 * F_leg - t12 * T_leg
     T2 = t21 * F_leg - t22 * T_leg
+    T1 = torch.nan_to_num(T1, nan=0.0, posinf=0.0, neginf=0.0)
+    T2 = torch.nan_to_num(T2, nan=0.0, posinf=0.0, neginf=0.0)
 
     return T1, T2
 
@@ -316,6 +319,7 @@ def compute_vmc_action(
 
     # Apply motor torque scale (domain randomization, matching WL-Gym)
     torques = torques * torque_scale
+    torques = torch.nan_to_num(torques, nan=0.0, posinf=0.0, neginf=0.0)
 
     # Clip to torque limits
     torques = torch.clamp(torques, -torque_limits, torque_limits)
@@ -420,6 +424,8 @@ class WLVMCAction(ActionTerm):
         self._processed_actions[:] = self._raw_actions
         self._processed_actions[:, [0, 1, 3, 4]].clamp_(-self.cfg.clip_leg_actions, self.cfg.clip_leg_actions)
         self._processed_actions[:, [2, 5]].clamp_(-self.cfg.clip_wheel_actions, self.cfg.clip_wheel_actions)
+        if self.cfg.action_scale_vel == 0.0 or self.cfg.clip_wheel_actions <= 0.0:
+            self._processed_actions[:, [2, 5]] = 0.0
 
     def apply_actions(self):
         self._action_fifo[:, 1:, :] = self._action_fifo[:, :-1, :].clone()
