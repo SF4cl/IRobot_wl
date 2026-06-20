@@ -281,6 +281,7 @@ def reset_root_state_fallen(
     joint_velocity_range: tuple[float, float] = (-1.0, 1.0),
     fallen_probability: float = 1.0,
     ground_height_offset: float = 0.05,
+    allow_random_orientation: bool = True,
 ):
     """Reset the robot to a random fallen pose for stand-up recovery training.
 
@@ -352,7 +353,9 @@ def reset_root_state_fallen(
     if is_fallen.any():
         n_fallen = is_fallen.sum().item()
         if n_fallen > 0:
-            # Three fall types with equal probability
+            # Three fall types with equal probability. The self-righting
+            # curriculum can disable fully random orientations for its first
+            # stage, replacing them with a moderate diagonal fall.
             fall_type = torch.randint(0, 3, (n_fallen,), device=device)
             fallen_ids = torch.where(is_fallen)[0]
 
@@ -378,8 +381,16 @@ def reset_root_state_fallen(
             # Type 2: Completely random (any orientation, can be upside-down)
             mask = fall_type == 2
             if mask.any():
-                roll[fallen_ids[mask]] = math_utils.sample_uniform(-3.14, 3.14, (mask.sum().item(),), device=device)
-                pitch[fallen_ids[mask]] = math_utils.sample_uniform(-3.14, 3.14, (mask.sum().item(),), device=device)
+                if allow_random_orientation:
+                    roll[fallen_ids[mask]] = math_utils.sample_uniform(-3.14, 3.14, (mask.sum().item(),), device=device)
+                    pitch[fallen_ids[mask]] = math_utils.sample_uniform(-3.14, 3.14, (mask.sum().item(),), device=device)
+                else:
+                    roll_mag = math_utils.sample_uniform(0.7, 1.2, (mask.sum().item(),), device=device)
+                    pitch_mag = math_utils.sample_uniform(0.7, 1.2, (mask.sum().item(),), device=device)
+                    roll_sign = torch.sign(math_utils.sample_uniform(-1.0, 1.0, (mask.sum().item(),), device=device))
+                    pitch_sign = torch.sign(math_utils.sample_uniform(-1.0, 1.0, (mask.sum().item(),), device=device))
+                    roll[fallen_ids[mask]] = roll_mag * roll_sign
+                    pitch[fallen_ids[mask]] = pitch_mag * pitch_sign
                 yaw[fallen_ids[mask]] = math_utils.sample_uniform(-3.14, 3.14, (mask.sum().item(),), device=device)
 
     # Normal envs: small perturbations around upright

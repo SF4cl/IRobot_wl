@@ -7,6 +7,11 @@ import torch.optim as optim
 from .rollout_storage import RolloutStorage
 
 
+def sanitize_tensor(tensor: torch.Tensor, limit: float = 1.0e6) -> torch.Tensor:
+    """Replace non-finite values before they enter PPO math."""
+    return torch.nan_to_num(tensor, nan=0.0, posinf=limit, neginf=-limit).clamp(-limit, limit)
+
+
 class PPO:
     def __init__(
         self,
@@ -73,6 +78,9 @@ class PPO:
         )
 
     def act(self, obs, obs_history, critic_obs):
+        obs = sanitize_tensor(obs, limit=100.0)
+        obs_history = sanitize_tensor(obs_history, limit=100.0)
+        critic_obs = sanitize_tensor(critic_obs, limit=100.0)
         self.transition.actions = self.actor_critic.act(obs, obs_history).detach()
         latent = self.actor_critic.get_latent()
         critic_obs = torch.cat((critic_obs, latent), dim=-1)
@@ -86,7 +94,7 @@ class PPO:
         return self.transition.actions
 
     def process_env_step(self, rewards, dones, infos, next_obs=None):
-        self.transition.rewards = rewards.clone()
+        self.transition.rewards = sanitize_tensor(rewards.clone(), limit=1.0e4)
         self.transition.dones = dones
         if "time_outs" in infos:
             self.transition.rewards += self.gamma * torch.squeeze(
@@ -99,6 +107,7 @@ class PPO:
         self.actor_critic.reset(dones)
 
     def compute_returns(self, last_critic_obs):
+        last_critic_obs = sanitize_tensor(last_critic_obs, limit=100.0)
         last_values = self.actor_critic.evaluate(last_critic_obs).detach()
         self.storage.compute_returns(last_values, self.gamma, self.lam)
 
@@ -120,6 +129,17 @@ class PPO:
                 old_mu_batch,
                 old_sigma_batch,
             ) = batch
+
+            obs_batch = sanitize_tensor(obs_batch, limit=100.0)
+            obs_history_batch = sanitize_tensor(obs_history_batch, limit=100.0)
+            critic_obs_batch = sanitize_tensor(critic_obs_batch, limit=100.0)
+            actions_batch = sanitize_tensor(actions_batch, limit=100.0)
+            target_values_batch = sanitize_tensor(target_values_batch)
+            advantages_batch = sanitize_tensor(advantages_batch)
+            returns_batch = sanitize_tensor(returns_batch)
+            old_actions_log_prob_batch = sanitize_tensor(old_actions_log_prob_batch)
+            old_mu_batch = sanitize_tensor(old_mu_batch, limit=100.0)
+            old_sigma_batch = sanitize_tensor(old_sigma_batch, limit=100.0).clamp_min(1.0e-6)
 
             self.actor_critic.act(obs_batch, obs_history_batch)
             actions_log_prob_batch = self.actor_critic.get_actions_log_prob(actions_batch)
@@ -163,10 +183,16 @@ class PPO:
                 value_loss = (returns_batch - value_batch).pow(2).mean()
 
             loss = surrogate_loss + self.value_loss_coef * value_loss - self.entropy_coef * entropy_batch.mean()
+            if not torch.isfinite(loss):
+                continue
             self.optimizer.zero_grad()
             loss.backward()
-            nn.utils.clip_grad_norm_(self.actor_critic.parameters(), self.max_grad_norm)
+            grad_norm = nn.utils.clip_grad_norm_(self.actor_critic.parameters(), self.max_grad_norm)
+            if not torch.isfinite(grad_norm):
+                self.optimizer.zero_grad()
+                continue
             self.optimizer.step()
+            self.actor_critic.std.data.clamp_(1.0e-3, 5.0)
 
             mean_value_loss += value_loss.item()
             mean_surrogate_loss += surrogate_loss.item()
@@ -178,11 +204,18 @@ class PPO:
         for next_obs_batch, critic_obs_batch, obs_history_batch in self.storage.encoder_mini_batch_generator(
             self.num_mini_batches, self.num_learning_epochs
         ):
+            critic_obs_batch = sanitize_tensor(critic_obs_batch, limit=100.0)
+            obs_history_batch = sanitize_tensor(obs_history_batch, limit=100.0)
             latent_batch = self.actor_critic.encode(obs_history_batch)
             extra_loss = (latent_batch[:, :3] - critic_obs_batch[:, :3]).pow(2).mean()
+            if not torch.isfinite(extra_loss):
+                continue
             self.extra_optimizer.zero_grad()
             extra_loss.backward()
-            nn.utils.clip_grad_norm_(self.actor_critic.parameters(), 0.1)
+            extra_grad_norm = nn.utils.clip_grad_norm_(self.actor_critic.encoder.parameters(), 0.1)
+            if not torch.isfinite(extra_grad_norm):
+                self.extra_optimizer.zero_grad()
+                continue
             self.extra_optimizer.step()
             mean_extra_loss += extra_loss.item()
             num_updates_extra += 1

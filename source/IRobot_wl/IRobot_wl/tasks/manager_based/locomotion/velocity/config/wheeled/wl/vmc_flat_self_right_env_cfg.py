@@ -32,6 +32,12 @@ class WLVMCVanillaFlatSelfRightEnvCfg(WLVMCVanillaFlatEnvCfg):
         self.actions.vmc.clip_wheel_actions = 0.0
         self.vmc_actions.wheel_damping = 0.0
         self.actions.vmc.wheel_damping = 0.0
+        self.vmc_actions.action_scale_theta = 0.35
+        self.actions.vmc.action_scale_theta = 0.35
+        self.vmc_actions.action_scale_l0 = 0.07
+        self.actions.vmc.action_scale_l0 = 0.07
+        self.vmc_actions.clip_leg_actions = 2.0
+        self.actions.vmc.clip_leg_actions = 2.0
 
         # Slightly reduce delay/randomization for the first isolated skill.
         self.actions.vmc.randomize_action_delay = False
@@ -62,6 +68,7 @@ class WLVMCVanillaFlatSelfRightEnvCfg(WLVMCVanillaFlatEnvCfg):
                 "joint_velocity_range": (-0.5, 0.5),
                 "fallen_probability": 1.0,
                 "ground_height_offset": 0.06,
+                "allow_random_orientation": False,
             },
         )
         self.events.randomize_reset_joints = None
@@ -92,21 +99,21 @@ class WLVMCVanillaFlatSelfRightEnvCfg(WLVMCVanillaFlatEnvCfg):
 
         self.rewards.self_right_attitude = RewTerm(
             func=mdp.self_right_attitude,
-            weight=6.0,
-            params={"std": 0.35, "asset_cfg": SceneEntityCfg("robot")},
+            weight=4.0,
+            params={"std": 0.45, "asset_cfg": SceneEntityCfg("robot")},
         )
         self.rewards.self_right_tilt_progress = RewTerm(
             func=mdp.self_right_tilt_progress,
-            weight=25.0,
+            weight=10.0,
             params={"max_reward": 0.05, "max_penalty": 0.02, "asset_cfg": SceneEntityCfg("robot")},
         )
         self.rewards.self_right_upright_success = RewTerm(
             func=mdp.self_right_upright_success,
-            weight=2.0,
+            weight=1.0,
             params={"threshold": -0.85, "asset_cfg": SceneEntityCfg("robot")},
         )
         self.rewards.ang_vel_xy_l2.weight = -0.03
-        self.rewards.action_rate_l2.weight = -0.01
+        self.rewards.action_rate_l2.weight = -0.02
         self.rewards.joint_torques_l2.weight = -1.0e-4
         self.rewards.joint_torques_l2.params["asset_cfg"].joint_names = self.leg_joint_names
         self.rewards.joint_pos_limits.weight = -1.0

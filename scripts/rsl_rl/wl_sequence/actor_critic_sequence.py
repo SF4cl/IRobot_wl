@@ -6,6 +6,11 @@ import torch.nn as nn
 from torch.distributions import Normal
 
 
+def sanitize_tensor(tensor: torch.Tensor, limit: float = 100.0) -> torch.Tensor:
+    """Replace non-finite values and clamp large finite spikes."""
+    return torch.nan_to_num(tensor, nan=0.0, posinf=limit, neginf=-limit).clamp(-limit, limit)
+
+
 def get_activation(act_name: str) -> nn.Module:
     if act_name == "elu":
         return nn.ELU()
@@ -96,9 +101,13 @@ class ActorCriticSequence(nn.Module):
         return None
 
     def update_distribution(self, observations: torch.Tensor, observation_history: torch.Tensor) -> None:
+        observations = sanitize_tensor(observations)
+        observation_history = sanitize_tensor(observation_history)
         self.latent = self.encoder(observation_history)
         mean = self.actor(torch.cat((observations, self.latent.detach()), dim=-1))
-        self.distribution = Normal(mean, mean * 0.0 + self.std)
+        mean = sanitize_tensor(mean)
+        std = sanitize_tensor(self.std, limit=5.0).clamp_min(1.0e-3)
+        self.distribution = Normal(mean, mean * 0.0 + std)
 
     def act(self, observations: torch.Tensor, observation_history: torch.Tensor) -> torch.Tensor:
         self.update_distribution(observations, observation_history)
@@ -111,12 +120,17 @@ class ActorCriticSequence(nn.Module):
         return self.latent
 
     def act_inference(self, observations: torch.Tensor, observation_history: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        observations = sanitize_tensor(observations)
+        observation_history = sanitize_tensor(observation_history)
         self.latent = self.encoder(observation_history)
         actions_mean = self.actor(torch.cat((observations, self.latent), dim=-1))
+        actions_mean = sanitize_tensor(actions_mean)
         return actions_mean, self.latent
 
     def evaluate(self, critic_observations: torch.Tensor) -> torch.Tensor:
+        critic_observations = sanitize_tensor(critic_observations)
         return self.critic(critic_observations)
 
     def encode(self, observation_history: torch.Tensor) -> torch.Tensor:
+        observation_history = sanitize_tensor(observation_history)
         return self.encoder(observation_history)
