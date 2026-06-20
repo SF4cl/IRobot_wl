@@ -73,7 +73,7 @@ class WLVMCVanillaFlatSelfRightEnvCfg(WLVMCVanillaFlatEnvCfg):
                 "joint_position_range": (-0.2, 0.2),
                 "joint_velocity_range": (0.0, 0.0),
                 "fallen_probability": 1.0,
-                "ground_height_offset": 0.14,
+                "ground_height_offset": 0.18,
                 "allow_random_orientation": False,
                 "simple_fall_type": "pitch_positive",
             },
@@ -104,23 +104,36 @@ class WLVMCVanillaFlatSelfRightEnvCfg(WLVMCVanillaFlatEnvCfg):
             if hasattr(reward_attr, "weight"):
                 reward_attr.weight = 0.0
 
-        self.rewards.self_right_attitude = RewTerm(
-            func=mdp.self_right_attitude,
-            weight=4.0,
-            params={"std": 0.45, "asset_cfg": SceneEntityCfg("robot")},
-        )
-        self.rewards.self_right_tilt_progress = RewTerm(
-            func=mdp.self_right_tilt_progress,
-            weight=10.0,
-            params={"max_reward": 0.05, "max_penalty": 0.02, "asset_cfg": SceneEntityCfg("robot")},
-        )
-        self.rewards.self_right_upright_success = RewTerm(
-            func=mdp.self_right_upright_success,
+        self.rewards.alive = RewTerm(
+            func=mdp.is_alive,
             weight=1.0,
-            params={"threshold": -0.85, "asset_cfg": SceneEntityCfg("robot")},
         )
-        self.rewards.ang_vel_xy_l2.weight = -0.03
-        self.rewards.action_rate_l2.weight = -0.02
+        self.rewards.self_right_orientation = RewTerm(
+            func=mdp.self_right_orientation_l2,
+            weight=-5.0,
+            params={"asset_cfg": SceneEntityCfg("robot")},
+        )
+        self.rewards.self_right_lin_vel_z = RewTerm(
+            func=mdp.self_right_lin_vel_z_l2,
+            weight=-0.01,
+            params={"asset_cfg": SceneEntityCfg("robot")},
+        )
+        self.rewards.self_right_ang_vel_xy = RewTerm(
+            func=mdp.self_right_ang_vel_xy_l2,
+            weight=-0.1,
+            params={"asset_cfg": SceneEntityCfg("robot")},
+        )
+        self.rewards.self_right_body_lin_acc = RewTerm(
+            func=mdp.self_right_body_lin_acc_l2,
+            weight=-0.001,
+            params={"asset_cfg": SceneEntityCfg("robot")},
+        )
+        self.rewards.action_rate_l2.weight = -0.01
+        self.rewards.joint_vel_l2.weight = -0.01
+        self.rewards.joint_vel_l2.params["asset_cfg"].joint_names = self.leg_joint_names
+        self.rewards.joint_vel_limits.weight = -0.1
+        self.rewards.joint_vel_limits.params["asset_cfg"].joint_names = self.leg_joint_names
+        self.rewards.joint_vel_limits.params["soft_ratio"] = 0.9
         self.rewards.joint_torques_l2.weight = -1.0e-4
         self.rewards.joint_torques_l2.params["asset_cfg"].joint_names = self.leg_joint_names
         self.rewards.joint_pos_limits.weight = -1.0

@@ -702,6 +702,50 @@ def flat_orientation_l2(env: ManagerBasedRLEnv, asset_cfg: SceneEntityCfg = Scen
     return reward
 
 
+def self_right_orientation_l2(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Ungated squared error from projected gravity to [0, 0, -1]."""
+    asset: RigidObject = env.scene[asset_cfg.name]
+    target = torch.tensor([0.0, 0.0, -1.0], device=asset.data.projected_gravity_b.device)
+    return torch.sum(torch.square(asset.data.projected_gravity_b - target), dim=1)
+
+
+def self_right_lin_vel_z_l2(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Ungated vertical base velocity penalty for recovery tasks."""
+    asset: RigidObject = env.scene[asset_cfg.name]
+    return torch.square(asset.data.root_lin_vel_b[:, 2])
+
+
+def self_right_ang_vel_xy_l2(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Ungated roll/pitch angular velocity penalty for recovery tasks."""
+    asset: RigidObject = env.scene[asset_cfg.name]
+    return torch.sum(torch.square(asset.data.root_ang_vel_b[:, :2]), dim=1)
+
+
+def self_right_body_lin_acc_l2(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Ungated body linear acceleration penalty for recovery tasks."""
+    asset: RigidObject = env.scene[asset_cfg.name]
+    if hasattr(asset.data, "body_acc_w"):
+        return torch.sum(torch.square(asset.data.body_acc_w[:, asset_cfg.body_ids, :3]), dim=(1, 2))
+    return torch.zeros(env.num_envs, device=env.device)
+
+
+def is_alive(env: ManagerBasedRLEnv) -> torch.Tensor:
+    """Constant alive bonus."""
+    return torch.ones(env.num_envs, device=env.device)
+
+
 # --------------------------------------------------------------------------- #
 # VMC / Wheel-Legged-Gym reward functions
 # --------------------------------------------------------------------------- #
