@@ -45,8 +45,8 @@ class WLVMCVanillaFlatSelfRightEnvCfg(WLVMCVanillaFlatEnvCfg):
         # Self-righting needs a fixed contact point. With free wheel joints the
         # wheels roll passively, so the legs cannot lever the body upright.
         wheel_actuator = self.scene.robot.actuators["wheel"]
-        wheel_actuator.damping = 2.0
-        wheel_actuator.friction = 4.0
+        wheel_actuator.damping = 0.8
+        wheel_actuator.friction = 1.5
 
         # ------------------------------Events------------------------------
         self.events.randomize_reset_base = EventTerm(
@@ -70,11 +70,12 @@ class WLVMCVanillaFlatSelfRightEnvCfg(WLVMCVanillaFlatEnvCfg):
                     "pitch": (-0.2, 0.2),
                     "yaw": (-0.2, 0.2),
                 },
-                "joint_position_range": (-0.8, 0.8),
-                "joint_velocity_range": (-0.5, 0.5),
+                "joint_position_range": (-0.2, 0.2),
+                "joint_velocity_range": (0.0, 0.0),
                 "fallen_probability": 1.0,
-                "ground_height_offset": 0.06,
+                "ground_height_offset": 0.14,
                 "allow_random_orientation": False,
+                "simple_fall_type": "pitch_positive",
             },
         )
         self.events.randomize_reset_joints = None
@@ -124,6 +125,11 @@ class WLVMCVanillaFlatSelfRightEnvCfg(WLVMCVanillaFlatEnvCfg):
         self.rewards.joint_torques_l2.params["asset_cfg"].joint_names = self.leg_joint_names
         self.rewards.joint_pos_limits.weight = -1.0
         self.rewards.joint_pos_limits.params["asset_cfg"].joint_names = ["lf1_Joint", "rf1_Joint"]
+        self.rewards.leg_length_symmetry = None
+        self.rewards.leg_angle_symmetry = None
+        self.rewards.vmc_action_symmetry = None
+        self.rewards.vmc_theta_ref_symmetry = None
+        self.rewards.joint_mirror = None
 
         # ------------------------------Curriculum------------------------------
         self.curriculum.terrain_levels = None

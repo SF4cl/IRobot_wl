@@ -282,6 +282,7 @@ def reset_root_state_fallen(
     fallen_probability: float = 1.0,
     ground_height_offset: float = 0.05,
     allow_random_orientation: bool = True,
+    simple_fall_type: str | None = None,
 ):
     """Reset the robot to a random fallen pose for stand-up recovery training.
 
@@ -353,14 +354,27 @@ def reset_root_state_fallen(
     if is_fallen.any():
         n_fallen = is_fallen.sum().item()
         if n_fallen > 0:
+            fallen_ids = torch.where(is_fallen)[0]
+
+            if simple_fall_type == "pitch_positive":
+                roll[fallen_ids] = math_utils.sample_uniform(0.15, 0.35, (n_fallen,), device=device)
+                pitch[fallen_ids] = math_utils.sample_uniform(1.15, 1.45, (n_fallen,), device=device)
+                yaw[fallen_ids] = math_utils.sample_uniform(-0.15, 0.15, (n_fallen,), device=device)
+                fall_type = None
+            elif simple_fall_type == "pitch_negative":
+                roll[fallen_ids] = math_utils.sample_uniform(0.15, 0.35, (n_fallen,), device=device)
+                pitch[fallen_ids] = math_utils.sample_uniform(-1.45, -1.15, (n_fallen,), device=device)
+                yaw[fallen_ids] = math_utils.sample_uniform(-0.15, 0.15, (n_fallen,), device=device)
+                fall_type = None
+            else:
+                fall_type = torch.randint(0, 3, (n_fallen,), device=device)
+
             # Three fall types with equal probability. The self-righting
             # curriculum can disable fully random orientations for its first
             # stage, replacing them with a moderate diagonal fall.
-            fall_type = torch.randint(0, 3, (n_fallen,), device=device)
-            fallen_ids = torch.where(is_fallen)[0]
 
             # Type 0: Side fall (large roll, small pitch)
-            mask = fall_type == 0
+            mask = (fall_type == 0) if fall_type is not None else torch.zeros(n_fallen, dtype=torch.bool, device=device)
             if mask.any():
                 # Roll: ±60° to ±100° (1.05 to 1.75 rad), random sign
                 roll_mag = math_utils.sample_uniform(1.05, 1.75, (mask.sum().item(),), device=device)
@@ -370,7 +384,7 @@ def reset_root_state_fallen(
                 yaw[fallen_ids[mask]] = math_utils.sample_uniform(-3.14, 3.14, (mask.sum().item(),), device=device)
 
             # Type 1: Front/back fall (large pitch, small to moderate roll)
-            mask = fall_type == 1
+            mask = (fall_type == 1) if fall_type is not None else torch.zeros(n_fallen, dtype=torch.bool, device=device)
             if mask.any():
                 pitch_mag = math_utils.sample_uniform(1.05, 1.75, (mask.sum().item(),), device=device)
                 pitch_sign = torch.sign(math_utils.sample_uniform(-1.0, 1.0, (mask.sum().item(),), device=device))
@@ -379,7 +393,7 @@ def reset_root_state_fallen(
                 yaw[fallen_ids[mask]] = math_utils.sample_uniform(-3.14, 3.14, (mask.sum().item(),), device=device)
 
             # Type 2: Completely random (any orientation, can be upside-down)
-            mask = fall_type == 2
+            mask = (fall_type == 2) if fall_type is not None else torch.zeros(n_fallen, dtype=torch.bool, device=device)
             if mask.any():
                 if allow_random_orientation:
                     roll[fallen_ids[mask]] = math_utils.sample_uniform(-3.14, 3.14, (mask.sum().item(),), device=device)
