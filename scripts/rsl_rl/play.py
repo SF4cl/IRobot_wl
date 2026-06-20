@@ -8,13 +8,53 @@
 """Launch Isaac Sim Simulator first."""
 
 import argparse
+import importlib.metadata as metadata
+import os
 import sys
 from pathlib import Path
+
+from packaging import version
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 LOCAL_SOURCE_DIR = REPO_ROOT / "source" / "IRobot_wl"
 if str(LOCAL_SOURCE_DIR) not in sys.path:
     sys.path.insert(0, str(LOCAL_SOURCE_DIR))
+
+RSL_RL_VERSION = "3.1.2"
+
+
+def _configure_temp_dir() -> Path:
+    """Point temporary files to a writable workspace directory."""
+    temp_dir = REPO_ROOT / ".tmp" / "isaaclab"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    temp_dir_str = str(temp_dir)
+    os.environ["ISAACLAB_TMPDIR"] = temp_dir_str
+    os.environ["TMPDIR"] = temp_dir_str
+    os.environ["TMP"] = temp_dir_str
+    os.environ["TEMP"] = temp_dir_str
+    return temp_dir
+
+
+def _check_and_preload_native_deps() -> str:
+    """Validate RSL-RL version and preload native deps before Kit starts."""
+    installed_version = metadata.version("rsl-rl-lib")
+    if version.parse(installed_version) < version.parse(RSL_RL_VERSION):
+        print(
+            f"Please install the correct version of RSL-RL.\nExisting version is: '{installed_version}'"
+            f" and required version is: '{RSL_RL_VERSION}'."
+        )
+        raise SystemExit(1)
+
+    # Preload native Python extensions before Omniverse Kit starts. On Windows, importing
+    # these first avoids later DLL/access-violation failures during extension startup.
+    import h5py  # noqa: F401
+    from rsl_rl.runners import DistillationRunner, OnPolicyRunner  # noqa: F401
+
+    return installed_version
+
+
+_configure_temp_dir()
+installed_version = _check_and_preload_native_deps()
 
 from isaaclab.app import AppLauncher
 
@@ -58,17 +98,8 @@ sys.argv = [sys.argv[0]] + hydra_args
 app_launcher = AppLauncher(args_cli)
 simulation_app = app_launcher.app
 
-"""Check for installed RSL-RL version."""
-
-import importlib.metadata as metadata
-
-from packaging import version
-
-installed_version = metadata.version("rsl-rl-lib")
-
 """Rest everything follows."""
 
-import os
 import time
 
 import gymnasium as gym
@@ -92,7 +123,6 @@ from isaaclab_rl.rsl_rl import (
     RslRlVecEnvWrapper,
     export_policy_as_jit,
     export_policy_as_onnx,
-    handle_deprecated_rsl_rl_cfg,
 )
 from isaaclab_rl.utils.pretrained_checkpoint import get_published_pretrained_checkpoint
 
@@ -104,6 +134,11 @@ import IRobot_wl.tasks  # noqa: F401  # isort: skip
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from rl_utils import camera_follow
 from wl_sequence import WlSequenceRunner
+
+try:
+    from isaaclab_rl.rsl_rl import handle_deprecated_rsl_rl_cfg
+except ImportError:
+    handle_deprecated_rsl_rl_cfg = None
 
 # PLACEHOLDER: Extension template (do not remove this comment)
 
@@ -119,7 +154,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     env_cfg.scene.num_envs = args_cli.num_envs if args_cli.num_envs is not None else 64
 
     # handle deprecated configurations
-    if agent_cfg.class_name != "WlSequenceRunner":
+    if handle_deprecated_rsl_rl_cfg is not None and agent_cfg.class_name != "WlSequenceRunner":
         agent_cfg = handle_deprecated_rsl_rl_cfg(agent_cfg, installed_version)
 
     # set the environment seed

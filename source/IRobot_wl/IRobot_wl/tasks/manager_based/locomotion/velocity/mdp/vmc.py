@@ -15,6 +15,11 @@ from isaaclab.managers.manager_term_cfg import ActionTermCfg
 from isaaclab.utils import configclass
 
 
+def wrap_to_pi(angle: torch.Tensor) -> torch.Tensor:
+    """Wrap an angle tensor to [-pi, pi]."""
+    return torch.atan2(torch.sin(angle), torch.cos(angle))
+
+
 def forward_kinematics(
     theta1: torch.Tensor,
     theta2: torch.Tensor,
@@ -79,7 +84,7 @@ def compute_vmc_state(
     L0, theta0 = forward_kinematics(theta1, theta2, l1, l2, offset)
     L0_fwd, theta0_fwd = forward_kinematics(theta1 + theta1_dot * dt, theta2 + theta2_dot * dt, l1, l2, offset)
     L0_dot = (L0_fwd - L0) / dt
-    theta0_dot = (theta0_fwd - theta0) / dt
+    theta0_dot = wrap_to_pi(theta0_fwd - theta0) / dt
 
     # Wheel task coordinates follow the physical joint axes. Static wheel-only
     # checks should show a positive wheel reference driving positive joint/VMC
@@ -283,7 +288,8 @@ def compute_vmc_action(
     wheel_vel = state["wheel_vel"]
 
     # --- Task-space PD control ---
-    torque_leg = kp_theta * (theta0_ref - theta0) - kd_theta * theta0_dot
+    theta0_error = wrap_to_pi(theta0_ref - theta0)
+    torque_leg = kp_theta * theta0_error - kd_theta * theta0_dot
     force_leg = kp_l0 * (l0_ref - L0) - kd_l0 * L0_dot
 
     # --- VMC: task-space force/torque → joint torques ---

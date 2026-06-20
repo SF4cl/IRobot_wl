@@ -1110,6 +1110,51 @@ def recovery_upright_progress(
     return reward
 
 
+def self_right_attitude(
+    env: ManagerBasedRLEnv,
+    std: float = 0.35,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Reward body attitude approaching projected gravity [0, 0, -1]."""
+    asset: RigidObject = env.scene[asset_cfg.name]
+    gravity_b = asset.data.projected_gravity_b
+    upright_error = torch.sum(torch.square(gravity_b[:, :2]), dim=1) + torch.square(gravity_b[:, 2] + 1.0)
+    return torch.exp(-upright_error / (std**2))
+
+
+def self_right_tilt_progress(
+    env: ManagerBasedRLEnv,
+    max_reward: float = 0.05,
+    max_penalty: float = 0.02,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Reward step-to-step reduction in body-frame gravity xy tilt."""
+    asset: RigidObject = env.scene[asset_cfg.name]
+    tilt = torch.linalg.norm(asset.data.projected_gravity_b[:, :2], dim=1)
+
+    prev_name = "_self_right_prev_tilt_xy"
+    prev_tilt = getattr(env, prev_name, None)
+    if prev_tilt is None or prev_tilt.shape != tilt.shape:
+        prev_tilt = tilt.detach().clone()
+
+    progress = prev_tilt - tilt
+    if hasattr(env, "episode_length_buf"):
+        progress = torch.where(env.episode_length_buf <= 1, torch.zeros_like(progress), progress)
+
+    setattr(env, prev_name, tilt.detach().clone())
+    return torch.clamp(progress, min=-max_penalty, max=max_reward)
+
+
+def self_right_upright_success(
+    env: ManagerBasedRLEnv,
+    threshold: float = -0.85,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Sparse bonus once the body is close to upright."""
+    asset: RigidObject = env.scene[asset_cfg.name]
+    return (asset.data.projected_gravity_b[:, 2] < threshold).float()
+
+
 def recovery_base_height(
     env: ManagerBasedRLEnv,
     target_height: float = 0.23,

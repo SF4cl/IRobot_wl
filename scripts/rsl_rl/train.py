@@ -8,13 +8,58 @@
 """Launch Isaac Sim Simulator first."""
 
 import argparse
+import importlib.metadata as metadata
+import os
+import platform
 import sys
 from pathlib import Path
+
+from packaging import version
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 LOCAL_SOURCE_DIR = REPO_ROOT / "source" / "IRobot_wl"
 if str(LOCAL_SOURCE_DIR) not in sys.path:
     sys.path.insert(0, str(LOCAL_SOURCE_DIR))
+
+RSL_RL_VERSION = "3.1.2"
+
+
+def _configure_temp_dir() -> Path:
+    """Point temporary files to a writable workspace directory."""
+    temp_dir = REPO_ROOT / ".tmp" / "isaaclab"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    temp_dir_str = str(temp_dir)
+    os.environ["ISAACLAB_TMPDIR"] = temp_dir_str
+    os.environ["TMPDIR"] = temp_dir_str
+    os.environ["TMP"] = temp_dir_str
+    os.environ["TEMP"] = temp_dir_str
+    return temp_dir
+
+
+def _check_and_preload_rsl_rl() -> str:
+    """Validate the installed RSL-RL version and preload native deps before Kit starts."""
+    installed_version = metadata.version("rsl-rl-lib")
+    if version.parse(installed_version) < version.parse(RSL_RL_VERSION):
+        if platform.system() == "Windows":
+            cmd = [r".\isaaclab.bat", "-p", "-m", "pip", "install", f"rsl-rl-lib=={RSL_RL_VERSION}"]
+        else:
+            cmd = ["./isaaclab.sh", "-p", "-m", "pip", "install", f"rsl-rl-lib=={RSL_RL_VERSION}"]
+        print(
+            f"Please install the correct version of RSL-RL.\nExisting version is: '{installed_version}'"
+            f" and required version is: '{RSL_RL_VERSION}'.\nTo install the correct version, run:"
+            f"\n\n\t{' '.join(cmd)}\n"
+        )
+        raise SystemExit(1)
+
+    # Import RSL-RL before AppLauncher to avoid a Windows access violation when tensordict._C
+    # is first loaded after Omniverse Kit has already initialized.
+    from rsl_rl.runners import DistillationRunner, OnPolicyRunner  # noqa: F401
+
+    return installed_version
+
+
+_configure_temp_dir()
+installed_version = _check_and_preload_rsl_rl()
 
 from isaaclab.app import AppLauncher
 
@@ -57,32 +102,9 @@ sys.argv = [sys.argv[0]] + hydra_args
 app_launcher = AppLauncher(args_cli)
 simulation_app = app_launcher.app
 
-"""Check for minimum supported RSL-RL version."""
-
-import importlib.metadata as metadata
-import platform
-
-from packaging import version
-
-# check minimum supported rsl-rl version
-RSL_RL_VERSION = "3.0.1"
-installed_version = metadata.version("rsl-rl-lib")
-if version.parse(installed_version) < version.parse(RSL_RL_VERSION):
-    if platform.system() == "Windows":
-        cmd = [r".\isaaclab.bat", "-p", "-m", "pip", "install", f"rsl-rl-lib=={RSL_RL_VERSION}"]
-    else:
-        cmd = ["./isaaclab.sh", "-p", "-m", "pip", "install", f"rsl-rl-lib=={RSL_RL_VERSION}"]
-    print(
-        f"Please install the correct version of RSL-RL.\nExisting version is: '{installed_version}'"
-        f" and required version is: '{RSL_RL_VERSION}'.\nTo install the correct version, run:"
-        f"\n\n\t{' '.join(cmd)}\n"
-    )
-    exit(1)
-
 """Rest everything follows."""
 
 import logging
-import os
 import time
 from datetime import datetime
 
@@ -100,13 +122,18 @@ from isaaclab.envs import (
 from isaaclab.utils.dict import print_dict
 from isaaclab.utils.io import dump_yaml
 
-from isaaclab_rl.rsl_rl import RslRlBaseRunnerCfg, RslRlVecEnvWrapper, handle_deprecated_rsl_rl_cfg
+from isaaclab_rl.rsl_rl import RslRlBaseRunnerCfg, RslRlVecEnvWrapper
 
 from isaaclab_tasks.utils import get_checkpoint_path
 from isaaclab_tasks.utils.hydra import hydra_task_config
 
 import IRobot_wl.tasks  # noqa: F401  # isort: skip
 from wl_sequence import WlSequenceRunner
+
+try:
+    from isaaclab_rl.rsl_rl import handle_deprecated_rsl_rl_cfg
+except ImportError:
+    handle_deprecated_rsl_rl_cfg = None
 
 # import logger
 logger = logging.getLogger(__name__)
@@ -130,7 +157,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     )
 
     # handle deprecated configurations
-    if agent_cfg.class_name != "WlSequenceRunner":
+    if handle_deprecated_rsl_rl_cfg is not None and agent_cfg.class_name != "WlSequenceRunner":
         agent_cfg = handle_deprecated_rsl_rl_cfg(agent_cfg, installed_version)
 
     # set the environment seed

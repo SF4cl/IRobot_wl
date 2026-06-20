@@ -67,3 +67,13 @@ gym.register(
         "rsl_rl_cfg_entry_point": f"{agents.__name__}.vmc_rsl_rl_ppo_recovery_cfg:WLVMCVanillaFlatRecoveryPPORunnerCfg",
     },
 )
+
+gym.register(
+    id="IRobot-WL-Velocity-VMC-Flat-SelfRight-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.vmc_flat_self_right_env_cfg:WLVMCVanillaFlatSelfRightEnvCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.vmc_rsl_rl_ppo_self_right_cfg:WLVMCVanillaFlatSelfRightPPORunnerCfg",
+    },
+)

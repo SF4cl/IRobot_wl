@@ -57,6 +57,8 @@ python scripts/rsl_rl/train.py \
   --task IRobot-WL-Velocity-VMC-Rough-v0 \
   --agent rsl_rl_cfg_entry_point \
   --headless
+
+  python scripts/rsl_rl/train.py --task IRobot-WL-Velocity-VMC-Rough-v0 --agent rsl_rl_cfg_entry_point --headless
 ```
 
 普通 Flat 训练：
@@ -270,3 +272,14 @@ find logs/rsl_rl/wl_vmc_flat -maxdepth 2 -type f | grep 'model_.*\.pt' | sort
 3. 用 `play.py` 看效果
 4. 用 `--resume` 继续训练
 5. 用 `tensorboard` 看 reward 和 episode length 曲线
+
+ssh -p 37023 root@connect.westc.seetacloud.com
+RCZQCoglue1U
+
+scp -P 37023 -r root@connect.westc.seetacloud.com:/root/autodl-tmp/wl_workspace/IRobot_wl/logs/rsl_rl/wl_vmc_flat_recovery D:\rm\2026_code\rl\IRobot_wl\logs\rsl_rl
+
+python scripts/rsl_rl/train.py --task IRobot-WL-Velocity-VMC-Flat-Recovery-v0 --agent rsl_rl_cfg_entry_point --headless
+
+python scripts/rsl_rl/play.py --task IRobot-WL-Velocity-VMC-Flat-Recovery-v0 --agent rsl_rl_cfg_entry_point --num_envs 32
+
+python scripts/rsl_rl/play.py --task IRobot-WL-Velocity-VMC-Flat-Recovery-v0 --agent rsl_rl_cfg_entry_point --load_run 2026-06-19_19-24-16 --checkpoint model_7250.pt --num_envs 32
