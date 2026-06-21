@@ -31,13 +31,13 @@ WL_CFG = ArticulationCfg(
         ),
     ),
     init_state=ArticulationCfg.InitialStateCfg(
-        pos=(0.0, 0.0, 0.220191),
+        pos=(0.0, 0.0, 0.18),
         joint_pos={
             "lf0_Joint": -0.033355643155,
-            "lf1_Joint": 0.012163245493,
+            "lf1_Joint": 0.18,
             "l_wheel_Joint": 0.0,
             "rf0_Joint": 0.033355643155,
-            "rf1_Joint": -0.012163245493,
+            "rf1_Joint": -0.18,
             "r_wheel_Joint": 0.0,
         },
         joint_vel={".*": 0.0},

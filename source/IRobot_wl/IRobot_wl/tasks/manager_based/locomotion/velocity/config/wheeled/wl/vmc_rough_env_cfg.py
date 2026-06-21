@@ -84,7 +84,7 @@ class WLVMCVanillaActionsCfg:
     kd_l0: float = 20.0  # length D gain [N*s/m]
 
     # VMC parameters
-    l0_offset: float = 0.17  # default leg length [m]
+    l0_offset: float = 0.13  # default leg length [m]
     l0_min: float = 0.1219258562330587  # reachable L0 lower bound [m]
     l0_max: float = 0.3006386827708927  # reachable L0 upper bound [m]
     feedforward_force: float = 40.0  # gravity compensation [N]
@@ -157,7 +157,7 @@ class WLVMCControlActionsCfg:
         kd_theta=3.0,
         kp_l0=900.0,
         kd_l0=20.0,
-        l0_offset=0.17,
+        l0_offset=0.13,
         l0_min=0.1219258562330587,
         l0_max=0.3006386827708927,
         feedforward_force=40.0,
@@ -195,7 +195,7 @@ class WLVMCObsCfg(ObservationsCfg):
         )
         velocity_commands = ObsTerm(
             func=mdp.wl_vmc_commands,
-            params={"command_name": "base_velocity", "height_command": 0.23},
+            params={"command_name": "base_velocity", "height_command": 0.19},
             clip=(-100.0, 100.0),
             scale=1.0,
         )
@@ -288,7 +288,7 @@ class WLVMCObsCfg(ObservationsCfg):
         projected_gravity = ObsTerm(func=mdp.projected_gravity, clip=(-100.0, 100.0), scale=1.0)
         velocity_commands = ObsTerm(
             func=mdp.wl_vmc_commands,
-            params={"command_name": "base_velocity", "height_command": 0.23},
+            params={"command_name": "base_velocity", "height_command": 0.19},
             clip=(-100.0, 100.0),
             scale=1.0,
         )
@@ -517,7 +517,7 @@ class WLVMCVanillaRewardsCfg(RewardsCfg):
     base_height_enhance = RewTerm(
         func=mdp.base_height_enhance,
         weight=0.0,
-        params={"target_height": 0.23, "sensor_cfg": None},
+        params={"target_height": 0.19, "sensor_cfg": None},
     )
 
     # Wheel-specific rewards (added to base)
@@ -625,11 +625,11 @@ class WLVMCVanillaRoughEnvCfg(LocomotionVelocityRoughEnvCfg):
         self.rewards.ang_vel_xy_l2.weight = -0.05
         self.rewards.flat_orientation_l2.weight = -10.0
         self.rewards.base_height_l2.weight = 0
-        self.rewards.base_height_l2.params["target_height"] = 0.23
+        self.rewards.base_height_l2.params["target_height"] = 0.19
         self.rewards.base_height_l2.params["sensor_cfg"] = None
         self.rewards.base_height_l2.params["asset_cfg"].body_names = [self.base_link_name]
         self.rewards.base_height_enhance.weight = 1.0
-        self.rewards.base_height_enhance.params["target_height"] = 0.23
+        self.rewards.base_height_enhance.params["target_height"] = 0.19
         self.rewards.theta0_nominal.weight = -0.3
         self.rewards.body_lin_acc_l2.weight = 0
 

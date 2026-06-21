@@ -486,7 +486,7 @@ class WLVMCActionCfg(ActionTermCfg):
     kd_theta: float = 3.0
     kp_l0: float = 900.0
     kd_l0: float = 20.0
-    l0_offset: float = 0.17
+    l0_offset: float = 0.13
     l0_min: float = 0.1219258562330587
     l0_max: float = 0.3006386827708927
     feedforward_force: float = 40.0

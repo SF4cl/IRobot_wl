@@ -1233,7 +1233,7 @@ def self_right_upright_success(
 
 def recovery_base_height(
     env: ManagerBasedRLEnv,
-    target_height: float = 0.23,
+    target_height: float = 0.19,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
 ) -> torch.Tensor:
     """Reward increasing base height during stand-up recovery.
