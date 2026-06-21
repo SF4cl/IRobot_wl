@@ -357,14 +357,14 @@ def reset_root_state_fallen(
             fallen_ids = torch.where(is_fallen)[0]
 
             if simple_fall_type == "pitch_positive":
-                roll[fallen_ids] = math_utils.sample_uniform(0.15, 0.35, (n_fallen,), device=device)
-                pitch[fallen_ids] = math_utils.sample_uniform(2.75, 3.1416, (n_fallen,), device=device)
-                yaw[fallen_ids] = math_utils.sample_uniform(-0.15, 0.15, (n_fallen,), device=device)
+                roll[fallen_ids] = math_utils.sample_uniform(0.10, 0.28, (n_fallen,), device=device)
+                pitch[fallen_ids] = math_utils.sample_uniform(1.15, 1.45, (n_fallen,), device=device)
+                yaw[fallen_ids] = math_utils.sample_uniform(-0.05, 0.05, (n_fallen,), device=device)
                 fall_type = None
             elif simple_fall_type == "pitch_negative":
-                roll[fallen_ids] = math_utils.sample_uniform(0.15, 0.35, (n_fallen,), device=device)
-                pitch[fallen_ids] = math_utils.sample_uniform(-3.1416, -2.75, (n_fallen,), device=device)
-                yaw[fallen_ids] = math_utils.sample_uniform(-0.15, 0.15, (n_fallen,), device=device)
+                roll[fallen_ids] = math_utils.sample_uniform(0.10, 0.28, (n_fallen,), device=device)
+                pitch[fallen_ids] = math_utils.sample_uniform(-1.45, -1.15, (n_fallen,), device=device)
+                yaw[fallen_ids] = math_utils.sample_uniform(-0.05, 0.05, (n_fallen,), device=device)
                 fall_type = None
             else:
                 fall_type = torch.randint(0, 3, (n_fallen,), device=device)

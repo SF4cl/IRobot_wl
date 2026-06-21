@@ -37,8 +37,10 @@ class WLVMCVanillaFlatEnvCfg(WLVMCVanillaRoughEnvCfg):
         self.actions.vmc.action_scale_vel = 52.0
         self.vmc_actions.wheel_damping = 0.08
         self.actions.vmc.wheel_damping = 0.08
-        self.vmc_actions.clip_leg_actions = 3.0
-        self.actions.vmc.clip_leg_actions = 3.0
+        self.vmc_actions.clip_tp_actions = 1.0
+        self.actions.vmc.clip_tp_actions = 1.0
+        self.vmc_actions.clip_force_actions = 1.0
+        self.actions.vmc.clip_force_actions = 1.0
         self.vmc_actions.clip_wheel_actions = 1.3262599469496021
         self.actions.vmc.clip_wheel_actions = 1.3262599469496021
 
@@ -48,8 +50,6 @@ class WLVMCVanillaFlatEnvCfg(WLVMCVanillaRoughEnvCfg):
 
         self.rewards.vmc_action_symmetry.weight = -0.15
         self.rewards.vmc_action_symmetry.params["wheel_scale"] = 0.0
-        self.rewards.vmc_theta_ref_symmetry.weight = -0.75
-        self.rewards.vmc_theta_ref_symmetry.params["action_scale_theta"] = self.vmc_actions.action_scale_theta
         self.rewards.nominal_state.weight = -0.05
         self.rewards.leg_length_symmetry.weight = -1.0
         self.rewards.leg_angle_symmetry.weight = -1.5

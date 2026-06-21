@@ -7,32 +7,6 @@ from . import agents
 ##
 
 gym.register(
-    id="IRobot-WL-Velocity-Flat-v0",
-    entry_point="isaaclab.envs:ManagerBasedRLEnv",
-    disable_env_checker=True,
-    kwargs={
-        "env_cfg_entry_point": f"{__name__}.flat_env_cfg:WLFlatEnvCfg",
-        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:WLFlatPPORunnerCfg",
-        "cusrl_cfg_entry_point": f"{agents.__name__}.cusrl_ppo_cfg:WLFlatTrainerCfg",
-    },
-)
-
-gym.register(
-    id="IRobot-WL-Velocity-Rough-v0",
-    entry_point="isaaclab.envs:ManagerBasedRLEnv",
-    disable_env_checker=True,
-    kwargs={
-        "env_cfg_entry_point": f"{__name__}.rough_env_cfg:WLRoughEnvCfg",
-        "rsl_rl_cfg_entry_point": f"{agents.__name__}.rsl_rl_ppo_cfg:WLRoughPPORunnerCfg",
-        "cusrl_cfg_entry_point": f"{agents.__name__}.cusrl_ppo_cfg:WLRoughTrainerCfg",
-    },
-)
-
-##
-# VMC (Virtual Model Control) environments.
-##
-
-gym.register(
     id="IRobot-WL-Velocity-VMC-Flat-v0",
     entry_point="isaaclab.envs:ManagerBasedRLEnv",
     disable_env_checker=True,
@@ -51,29 +25,5 @@ gym.register(
         "env_cfg_entry_point": f"{__name__}.vmc_rough_env_cfg:WLVMCVanillaRoughEnvCfg",
         "rsl_rl_cfg_entry_point": f"{agents.__name__}.vmc_rsl_rl_ppo_cfg:WLVMCVanillaRoughPPORunnerCfg",
         "cusrl_cfg_entry_point": f"{agents.__name__}.vmc_cusrl_ppo_cfg:WLVMCVanillaRoughTrainerCfg",
-    },
-)
-
-##
-# VMC Recovery (Stand-up + Locomotion) environment.
-##
-
-gym.register(
-    id="IRobot-WL-Velocity-VMC-Flat-Recovery-v0",
-    entry_point="isaaclab.envs:ManagerBasedRLEnv",
-    disable_env_checker=True,
-    kwargs={
-        "env_cfg_entry_point": f"{__name__}.vmc_flat_recovery_env_cfg:WLVMCVanillaFlatRecoveryEnvCfg",
-        "rsl_rl_cfg_entry_point": f"{agents.__name__}.vmc_rsl_rl_ppo_recovery_cfg:WLVMCVanillaFlatRecoveryPPORunnerCfg",
-    },
-)
-
-gym.register(
-    id="IRobot-WL-Velocity-VMC-Flat-SelfRight-v0",
-    entry_point="isaaclab.envs:ManagerBasedRLEnv",
-    disable_env_checker=True,
-    kwargs={
-        "env_cfg_entry_point": f"{__name__}.vmc_flat_self_right_env_cfg:WLVMCVanillaFlatSelfRightEnvCfg",
-        "rsl_rl_cfg_entry_point": f"{agents.__name__}.vmc_rsl_rl_ppo_self_right_cfg:WLVMCVanillaFlatSelfRightPPORunnerCfg",
     },
 )

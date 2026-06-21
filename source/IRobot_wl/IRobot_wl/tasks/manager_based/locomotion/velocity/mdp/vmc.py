@@ -163,8 +163,9 @@ def vmc_torques(
     """Compute joint torques from task-space forces using the VMC Jacobian transpose.
 
     Given desired leg force F_leg (along leg axis, positive = push) and leg torque
-    T_leg (about hip, positive = counterclockwise), compute the corresponding joint
-    torques for hip (T1) and knee (T2).
+    T_leg (about the virtual leg angle theta0), compute the corresponding joint
+    torques for hip (T1) and knee (T2).  The task coordinates are the same as
+    ``forward_kinematics()``: [L0, theta0].
 
     Args:
         theta0: Leg angle in task space, shape (num_envs, num_legs).
@@ -180,18 +181,21 @@ def vmc_torques(
         T1: Hip joint torque, shape (num_envs, num_legs).
         T2: Knee joint torque, shape (num_envs, num_legs).
     """
-    theta0_shifted = theta0 + torch.pi / 2
+    gamma = theta0 + torch.pi / 2
     L0_safe = torch.clamp(torch.nan_to_num(L0, nan=0.05, posinf=0.05, neginf=0.05), min=0.05)
 
-    # Jacobian transpose elements for the 2-DOF leg
-    t11 = l1 * torch.sin(theta0_shifted - theta1) - l2 * torch.sin(theta1 + theta2 - theta0_shifted)
-    t12 = (l1 * torch.cos(theta0_shifted - theta1) - l2 * torch.cos(theta1 + theta2 - theta0_shifted)) / L0_safe
+    # Jacobian transpose for task coordinates [L0, theta0].
+    # tau = dL0/dq * F_leg + dtheta0/dq * T_leg
+    dL_dtheta1 = l1 * torch.sin(gamma - theta1) - l2 * torch.sin(theta1 + theta2 - gamma)
+    dL_dtheta2 = -l2 * torch.sin(theta1 + theta2 - gamma)
 
-    t21 = -l2 * torch.sin(theta1 + theta2 - theta0_shifted)
-    t22 = -l2 * torch.cos(theta1 + theta2 - theta0_shifted) / L0_safe
+    dtheta_dtheta1 = (
+        l1 * torch.cos(gamma - theta1) + l2 * torch.cos(theta1 + theta2 - gamma)
+    ) / L0_safe
+    dtheta_dtheta2 = l2 * torch.cos(theta1 + theta2 - gamma) / L0_safe
 
-    T1 = t11 * F_leg - t12 * T_leg
-    T2 = t21 * F_leg - t22 * T_leg
+    T1 = dL_dtheta1 * F_leg + dtheta_dtheta1 * T_leg
+    T2 = dL_dtheta2 * F_leg + dtheta_dtheta2 * T_leg
     T1 = torch.nan_to_num(T1, nan=0.0, posinf=0.0, neginf=0.0)
     T2 = torch.nan_to_num(T2, nan=0.0, posinf=0.0, neginf=0.0)
 
@@ -218,19 +222,20 @@ def compute_vmc_action(
     l0_min: float,
     l0_max: float,
     feedforward_force: float,
-    action_scale_theta: float,
-    action_scale_l0: float,
+    action_scale_tp: float,
+    action_scale_force: float,
     action_scale_vel: float,
     wheel_damping: float,
     torque_limits: torch.Tensor,
     torque_scale: torch.Tensor | float = 1.0,
+    disabled_wheel_brake_damping: float = 0.0,
 ) -> torch.Tensor:
     """Compute joint torques from VMC task-space actions.
 
     This function takes policy actions in task-space coordinates and converts them
     to joint torques using Virtual Model Control. The action space is 6-dimensional
     for a bipedal robot with 2 legs:
-      [theta0_left, L0_left, wheel_vel_left, theta0_right, L0_right, wheel_vel_right]
+      [Tp_left, deltaF_left, wheel_vel_left, Tp_right, deltaF_right, wheel_vel_right]
 
     Args:
         actions: Policy actions in task space, shape (num_envs, 6).
@@ -241,16 +246,17 @@ def compute_vmc_action(
         l1: Thigh link length [m].
         l2: Calf link length [m].
         offset: Hip offset from body center [m].
-        kp_theta: Angle PD proportional gain [Nm/rad].
-        kd_theta: Angle PD derivative gain [Nm*s/rad].
-        kp_l0: Length PD proportional gain [N/m].
-        kd_l0: Length PD derivative gain [N*s/m].
-        l0_offset: Default leg length offset [m].
+        kp_theta: Legacy angle PD proportional gain, kept for config compatibility.
+        kd_theta: Legacy angle PD derivative gain, kept for config compatibility.
+        kp_l0: Legacy length PD proportional gain, kept for config compatibility.
+        kd_l0: Legacy length PD derivative gain, kept for config compatibility.
+        l0_offset: Legacy default leg length offset, kept for config compatibility.
         feedforward_force: Gravity compensation force [N].
-        action_scale_theta: Scale for theta actions.
-        action_scale_l0: Scale for L0 actions.
+        action_scale_tp: Scale for leg swing torque actions [Nm].
+        action_scale_force: Scale for residual axial force actions [N].
         action_scale_vel: Scale for wheel velocity actions.
         wheel_damping: Damping for wheel velocity control [Nm*s/rad].
+        disabled_wheel_brake_damping: Passive brake damping when wheel velocity actions are disabled [Nm*s/rad].
         torque_limits: Joint torque limits, shape (num_dof,).
 
     Returns:
@@ -259,14 +265,12 @@ def compute_vmc_action(
     num_envs = actions.shape[0]
     num_dof = dof_pos.shape[1]
 
-    # --- Parse task-space actions ---
-    # Left leg: actions[:, 0:3], Right leg: actions[:, 3:6]
-    theta0_ref = torch.stack([actions[:, 0], actions[:, 3]], dim=1)  # (num_envs, 2)
-    theta0_ref = theta0_ref * action_scale_theta + theta0_offset
-
-    l0_ref = torch.stack([actions[:, 1], actions[:, 4]], dim=1)  # (num_envs, 2)
-    l0_ref = l0_ref * action_scale_l0 + l0_offset
-    l0_ref = torch.clamp(l0_ref, min=l0_min, max=l0_max)
+    # --- Parse task-space force actions ---
+    # The policy outputs a residual axial force. Adding feedforward_force keeps
+    # zero policy action as a reasonable support-force baseline.
+    torque_leg = torch.stack([actions[:, 0], actions[:, 3]], dim=1) * action_scale_tp
+    force_leg_delta = torch.stack([actions[:, 1], actions[:, 4]], dim=1) * action_scale_force
+    force_leg = force_leg_delta + feedforward_force
 
     wheel_vel_ref = torch.stack([actions[:, 2], actions[:, 5]], dim=1)  # (num_envs, 2)
     wheel_vel_ref = wheel_vel_ref * action_scale_vel
@@ -286,20 +290,16 @@ def compute_vmc_action(
     theta2 = state["theta2"]
     L0 = state["L0"]
     theta0 = state["theta0"]
-    L0_dot = state["L0_dot"]
-    theta0_dot = state["theta0_dot"]
     wheel_vel = state["wheel_vel"]
 
-    # --- Task-space PD control ---
-    theta0_error = wrap_to_pi(theta0_ref - theta0)
-    torque_leg = kp_theta * theta0_error - kd_theta * theta0_dot
-    force_leg = kp_l0 * (l0_ref - L0) - kd_l0 * L0_dot
-
-    # --- VMC: task-space force/torque → joint torques ---
-    T1, T2 = vmc_torques(theta0, theta1, theta2, L0, force_leg + feedforward_force, torque_leg, l1, l2)
+    # --- VMC: task-space force/torque to joint torques ---
+    T1, T2 = vmc_torques(theta0, theta1, theta2, L0, force_leg, torque_leg, l1, l2)
 
     # --- Wheel velocity PD control ---
-    torque_wheel = wheel_damping * (wheel_vel_ref - wheel_vel)
+    if action_scale_vel == 0.0 and disabled_wheel_brake_damping > 0.0:
+        torque_wheel = disabled_wheel_brake_damping * wheel_vel
+    else:
+        torque_wheel = wheel_damping * (wheel_vel_ref - wheel_vel)
 
     # --- Assemble full torque vector ---
     torques = torch.zeros(num_envs, num_dof, device=actions.device, dtype=actions.dtype)
@@ -328,10 +328,11 @@ def compute_vmc_action(
 
 
 class WLVMCAction(ActionTerm):
-    """Direct torque VMC action term matching the original Wheel-Legged-Gym semantics.
+    """VMC action term that maps task-space force commands to joint torques.
 
-    Includes per-environment domain randomization of VMC PD gains, wheel damping,
-    and motor torque scale, matching the original WL-Gym's ``domain_rand`` config.
+    The leg channels command swing torque and residual axial force directly.
+    The old leg PD gain fields are retained for config compatibility but are not
+    used by this action path.
     """
 
     cfg: "WLVMCActionCfg"
@@ -369,9 +370,10 @@ class WLVMCAction(ActionTerm):
         self._randomize_action_delay()
 
     def _randomize_gains(self):
-        """Randomize VMC PD gains, wheel damping, and motor torque scale per environment.
+        """Randomize legacy gain buffers, wheel damping, and motor torque scale per environment.
 
-        Matching original WL-Gym domain randomization ranges [0.9, 1.1].
+        The leg PD buffers are kept for compatibility with older configs; direct
+        task-space force control uses wheel damping and motor torque scale here.
         """
         low, high = self.cfg.gain_randomization_range
         self._kp_theta[:] = self.cfg.kp_theta * (low + (high - low) * torch.rand(self.num_envs, 1, device=self.device))
@@ -422,7 +424,8 @@ class WLVMCAction(ActionTerm):
         self._previous_actions[:] = self._processed_actions
         self._raw_actions[:] = actions
         self._processed_actions[:] = self._raw_actions
-        self._processed_actions[:, [0, 1, 3, 4]].clamp_(-self.cfg.clip_leg_actions, self.cfg.clip_leg_actions)
+        self._processed_actions[:, [0, 3]].clamp_(-self.cfg.clip_tp_actions, self.cfg.clip_tp_actions)
+        self._processed_actions[:, [1, 4]].clamp_(-self.cfg.clip_force_actions, self.cfg.clip_force_actions)
         self._processed_actions[:, [2, 5]].clamp_(-self.cfg.clip_wheel_actions, self.cfg.clip_wheel_actions)
         if self.cfg.action_scale_vel == 0.0 or self.cfg.clip_wheel_actions <= 0.0:
             self._processed_actions[:, [2, 5]] = 0.0
@@ -452,12 +455,13 @@ class WLVMCAction(ActionTerm):
             l0_min=self.cfg.l0_min,
             l0_max=self.cfg.l0_max,
             feedforward_force=self.cfg.feedforward_force,
-            action_scale_theta=self.cfg.action_scale_theta,
-            action_scale_l0=self.cfg.action_scale_l0,
+            action_scale_tp=self.cfg.action_scale_tp,
+            action_scale_force=self.cfg.action_scale_force,
             action_scale_vel=self.cfg.action_scale_vel,
             wheel_damping=self._wheel_damping,
             torque_limits=self._asset.data.soft_joint_pos_limits.new_tensor(self.cfg.torque_limits),
             torque_scale=self._torque_scale,
+            disabled_wheel_brake_damping=self.cfg.disabled_wheel_brake_damping,
         )
         self._last_torques[:] = torques
         self._asset.set_joint_effort_target(torques)
@@ -476,10 +480,10 @@ class WLVMCAction(ActionTerm):
 
 @configclass
 class WLVMCActionCfg(ActionTermCfg):
-    """Configuration for the direct-torque WL VMC action term.
+    """Configuration for the WL VMC task-space force action term.
 
-    Includes domain randomization settings for VMC gains, matching the original
-    WL-Gym ``domain_rand`` config.
+    Action order is [Tp_l, deltaF_l, wheel_l, Tp_r, deltaF_r, wheel_r].
+    deltaF is added to feedforward_force before the VMC Jacobian mapping.
     """
 
     class_type: type[ActionTerm] = WLVMCAction
@@ -492,6 +496,7 @@ class WLVMCActionCfg(ActionTermCfg):
     theta1_offset: float = 0.14299916248023697
     theta2_offset: float = 2.406020345452543
     theta0_offset: float = 0.0
+    # Legacy target-PD fields retained so older config code can still assign them.
     kp_theta: float = 50.0
     kd_theta: float = 3.0
     kp_l0: float = 900.0
@@ -500,145 +505,22 @@ class WLVMCActionCfg(ActionTermCfg):
     l0_min: float = 0.1219258562330587
     l0_max: float = 0.3006386827708927
     feedforward_force: float = 40.0
-    action_scale_theta: float = 0.5
-    action_scale_l0: float = 0.1
+    action_scale_tp: float = 15.0
+    action_scale_force: float = 40.0
     action_scale_vel: float = 10.0
     wheel_damping: float = 0.05
+    disabled_wheel_brake_damping: float = 0.0
     clip_actions: float = 100.0
-    clip_leg_actions: float = 3.0
+    clip_tp_actions: float = 1.0
+    clip_force_actions: float = 1.0
     clip_wheel_actions: float = 3.0
     # Full articulation joint order is [lf0, rf0, lf1, rf1, l_wheel, r_wheel].
     torque_limits: list[float] = [30.0, 30.0, 30.0, 30.0, 4.0, 4.0]
 
-    # Domain randomization (matching original WL-Gym)
+    # Domain randomization
     randomize_vmc_gains: bool = False
     gain_randomization_range: tuple[float, float] = (0.9, 1.1)
     randomize_action_delay: bool = True
     action_delay_ms_range: tuple[float, float] = (0.0, 10.0)
 
 
-def convert_vmc_to_joint_actions(
-    actions: torch.Tensor,
-    l1: float,
-    l2: float,
-    offset: float,
-    theta1_offset: float,
-    theta2_offset: float,
-    theta0_offset: float,
-    l0_offset: float,
-    l0_min: float,
-    l0_max: float,
-    action_scale_theta: float,
-    action_scale_l0: float,
-    action_scale_vel: float,
-) -> torch.Tensor:
-    """Convert task-space actions to joint-space targets for Isaac Lab's PD pipeline.
-
-    The policy outputs 6-dim task-space actions:
-      [theta0_l, L0_l, wheel_vel_l, theta0_r, L0_r, wheel_vel_r]
-
-    This function uses IK to convert (theta0, L0) → (theta1, theta2) for each leg,
-    producing 6-dim joint-space targets:
-      [hip_l, knee_l, hip_r, knee_r, wheel_vel_l, wheel_vel_r]
-
-    The output is designed to be fed directly to Isaac Lab's JointPositionAction
-    (leg joints) + JointVelocityAction (wheel joints).
-
-    Args:
-        actions: Policy actions in task space, shape (num_envs, 6).
-        l1: Thigh link length [m].
-        l2: Calf link length [m].
-        offset: Hip offset from body center [m].
-        l0_offset: Default leg length offset [m].
-        action_scale_theta: Scale for theta actions.
-        action_scale_l0: Scale for L0 actions.
-        action_scale_vel: Scale for wheel velocity actions.
-
-    Returns:
-        Joint-space action vector, shape (num_envs, 6).
-        Order: [hip_l, knee_l, hip_r, knee_r, wheel_vel_l, wheel_vel_r]
-    """
-    # Parse task-space actions: [theta0_l, L0_l, w_l, theta0_r, L0_r, w_r]
-    theta0 = torch.stack([actions[:, 0], actions[:, 3]], dim=1)  # (num_envs, 2)
-    theta0 = theta0 * action_scale_theta + theta0_offset
-
-    L0 = torch.stack([actions[:, 1], actions[:, 4]], dim=1)  # (num_envs, 2)
-    L0 = L0 * action_scale_l0 + l0_offset
-    L0 = torch.clamp(L0, min=l0_min, max=l0_max)
-
-    wheel_vel = torch.stack([actions[:, 2], actions[:, 5]], dim=1)  # physical joint-axis convention, (num_envs, 2)
-    wheel_vel = wheel_vel * action_scale_vel
-
-    # IK: task-space → mirrored leg-frame joint angles used by the original
-    # Wheel-Legged-Gym VMC implementation.
-    theta1, theta2 = inverse_kinematics(theta0, L0, l1, l2, offset)
-
-    # Map leg-frame angles back to the physical joint coordinates expected by
-    # the URDF / Isaac Lab articulation. In the original Isaac Gym task:
-    #   left  leg: theta1 =  q_lf0 + theta1_offset, theta2 =  q_lf1 + theta2_offset
-    #   right leg: theta1 = -q_rf0 + theta1_offset, theta2 = -q_rf1 + theta2_offset
-    # Therefore the inverse mapping is:
-    #   q_lf0 =  theta1_l - theta1_offset
-    #   q_lf1 =  theta2_l - theta2_offset
-    #   q_rf0 = -(theta1_r - theta1_offset)
-    #   q_rf1 =  theta2_offset - theta2_r
-    hip_l = theta1[:, 0:1] - theta1_offset
-    knee_l = theta2[:, 0:1] - theta2_offset
-    hip_r = -(theta1[:, 1:2] - theta1_offset)
-    knee_r = theta2_offset - theta2[:, 1:2]
-
-    # Assemble: [hip_l, knee_l, hip_r, knee_r, wheel_vel_l, wheel_vel_r].
-    # Wheel velocity targets use the same sign as the physical wheel axes.
-    joint_actions = torch.cat(
-        [hip_l, knee_l, hip_r, knee_r, wheel_vel[:, 0:1], wheel_vel[:, 1:2]],
-        dim=1,
-    )
-    return joint_actions
-
-
-def apply_vmc_wrapper(env):
-    """Wrap an Isaac Lab environment to convert VMC task-space actions to joint-space.
-
-    This monkey-patches the env to intercept policy actions and convert them
-    from task-space [theta0, L0, wheel_vel] × 2 legs to joint-space
-    [hip, knee] × 2 legs + [wheel_vel] × 2 wheels via inverse kinematics.
-
-    Call this after gym.make() and before training:
-
-        env = gym.make("IRobot-WL-Velocity-VMC-Flat-v0", cfg=env_cfg)
-        env = apply_vmc_wrapper(env)
-        env = RslRlVecEnvWrapper(env, ...)
-
-    Args:
-        env: The Isaac Lab ManagerBasedRLEnv instance (possibly wrapped by gym wrappers).
-
-    Returns:
-        The wrapped environment (same object, with patched step method).
-    """
-    # Handle gym wrappers (OrderEnforcing, RecordVideo, etc.) by unwrapping
-    base_env = env
-    while hasattr(base_env, "env"):
-        base_env = base_env.env
-    vmc_cfg = base_env.cfg.vmc_actions
-    original_step = env.step
-
-    def vmc_step(actions):
-        joint_actions = convert_vmc_to_joint_actions(
-            actions=actions,
-            l1=vmc_cfg.l1,
-            l2=vmc_cfg.l2,
-            offset=vmc_cfg.offset,
-            theta1_offset=vmc_cfg.theta1_offset,
-            theta2_offset=vmc_cfg.theta2_offset,
-            theta0_offset=vmc_cfg.theta0_offset,
-            l0_offset=vmc_cfg.l0_offset,
-            l0_min=vmc_cfg.l0_min,
-            l0_max=vmc_cfg.l0_max,
-            action_scale_theta=vmc_cfg.action_scale_theta,
-            action_scale_l0=vmc_cfg.action_scale_l0,
-            action_scale_vel=vmc_cfg.action_scale_vel,
-        )
-        return original_step(joint_actions)
-
-    env.step = vmc_step
-    return env

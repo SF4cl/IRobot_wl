@@ -1,13 +1,14 @@
 """VMC (Virtual Model Control) environment configuration for the WL robot.
 
 This module defines the VMC-based training environment for the simple 2-DOF leg
-wheel-legged robot. The policy works in task space (leg angle θ₀, leg length L₀,
-wheel velocity) and VMC converts these to joint torques.
+wheel-legged robot. The policy works in task space (leg swing torque Tp,
+residual axial leg force deltaF, wheel velocity) and VMC converts these to joint torques.
 
 Reference: Wheel-Legged-Gym wheel_legged_vmc task.
 """
 
 import torch
+import isaaclab.terrains as terrain_gen
 from isaaclab.managers import ObservationGroupCfg as ObsGroup
 from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.managers import RewardTermCfg as RewTerm
@@ -26,7 +27,27 @@ from IRobot_wl.tasks.manager_based.locomotion.velocity.velocity_env_cfg import (
 # Pre-defined configs
 ##
 from IRobot_wl.assets.wl import WL_CFG  # isort: skip
-from .rough_env_cfg import ROUGH_ROAD_CFG  # isort: skip
+
+# Use a rough terrain generator (matching WL-Gym terrain curriculum approach)
+ROUGH_ROAD_CFG = terrain_gen.TerrainGeneratorCfg(
+    size=(8.0, 8.0),
+    border_width=20.0,
+    num_rows=10,
+    num_cols=20,
+    horizontal_scale=0.1,
+    vertical_scale=0.005,
+    slope_threshold=0.75,
+    difficulty_range=(0.0, 1.0),
+    use_cache=False,
+    sub_terrains={
+        "flat": terrain_gen.MeshPlaneTerrainCfg(
+            proportion=0.4,
+        ),
+        "random_rough": terrain_gen.HfRandomUniformTerrainCfg(
+            proportion=0.5, noise_range=(0.01, 0.05), noise_step=0.02, border_width=0.25
+        ),
+    },
+)
 
 
 # ============================================================================ #
@@ -43,7 +64,7 @@ class WLVMCVanillaActionsCfg:
     in the step loop via compute_vmc_torques_from_actions().
     """
 
-    # Number of actions: 6 (theta0, L0, wheel_vel per leg × 2 legs)
+    # Number of actions: 6 (Tp, residual axial force, wheel velocity per leg)
     num_actions = 6
 
     # VMC geometry parameters (from URDF)
@@ -54,7 +75,9 @@ class WLVMCVanillaActionsCfg:
     theta2_offset: float = 2.406020345452543  # knee-to-wheel zero-angle offset [rad]
     theta0_offset: float = 0.0  # default task-space leg angle [rad]
 
-    # VMC PD gains
+    # Legacy VMC target-PD fields. The current task-space force action path does
+    # not use these gains to create theta/L0 targets, but the fields are kept so
+    # older config overrides do not break.
     kp_theta: float = 50.0  # angle P gain [Nm/rad]
     kd_theta: float = 3.0  # angle D gain [Nm*s/rad]
     kp_l0: float = 900.0  # length P gain [N/m]
@@ -67,8 +90,8 @@ class WLVMCVanillaActionsCfg:
     feedforward_force: float = 40.0  # gravity compensation [N]
 
     # Action scales
-    action_scale_theta: float = 0.5
-    action_scale_l0: float = 0.1
+    action_scale_tp: float = 15.0
+    action_scale_force: float = 40.0
     action_scale_vel: float = 12.0
 
     # Wheel control
@@ -76,7 +99,8 @@ class WLVMCVanillaActionsCfg:
 
     # Action clipping
     clip_actions: float = 100.0
-    clip_leg_actions: float = 3.0
+    clip_tp_actions: float = 1.0
+    clip_force_actions: float = 1.0
     clip_wheel_actions: float = 1.3262599469496021
 
 
@@ -90,8 +114,8 @@ class WLVMCVanillaObservationsCfg:
     """VMC task-space observations configuration.
 
     In VMC mode, we observe:
-      - Task-space state: theta0, L0, theta0_dot, L0_dot (2 legs × 4 = 8 dims)
-      - Wheel state: wheel_pos, wheel_vel (2 wheels × 2 = 4 dims)
+      - Task-space state: theta0, L0, theta0_dot, L0_dot (2 legs x 4 = 8 dims)
+      - Wheel state: wheel_pos, wheel_vel (2 wheels x 2 = 4 dims)
       - Base state: ang_vel (3), projected_gravity (3)
       - Commands (3)
       - Previous actions (6)
@@ -141,12 +165,13 @@ class WLVMCControlActionsCfg:
         l0_min=0.1219258562330587,
         l0_max=0.3006386827708927,
         feedforward_force=40.0,
-        action_scale_theta=0.5,
-        action_scale_l0=0.1,
+        action_scale_tp=15.0,
+        action_scale_force=40.0,
         action_scale_vel=12.0,
         wheel_damping=0.08,
         clip_actions=100.0,
-        clip_leg_actions=3.0,
+        clip_tp_actions=1.0,
+        clip_force_actions=1.0,
         clip_wheel_actions=1.3262599469496021,
         # Full articulation joint order is [lf0, rf0, lf1, rf1, l_wheel, r_wheel].
         torque_limits=[30.0, 30.0, 30.0, 30.0, 4.0, 4.0],
@@ -505,12 +530,7 @@ class WLVMCVanillaRewardsCfg(RewardsCfg):
     vmc_action_symmetry = RewTerm(
         func=mdp.vmc_action_symmetry,
         weight=-0.25,
-        params={"action_name": "vmc", "theta_scale": 1.0, "l0_scale": 1.0, "wheel_scale": 0.0},
-    )
-    vmc_theta_ref_symmetry = RewTerm(
-        func=mdp.vmc_theta_ref_symmetry,
-        weight=0.0,
-        params={"action_name": "vmc", "action_scale_theta": 0.5},
+        params={"action_name": "vmc", "tp_scale": 1.0, "force_scale": 1.0, "wheel_scale": 0.0},
     )
     base_height_enhance = RewTerm(
         func=mdp.base_height_enhance,
@@ -591,12 +611,13 @@ class WLVMCVanillaRoughEnvCfg(LocomotionVelocityRoughEnvCfg):
         self.actions.vmc.l0_min = self.vmc_actions.l0_min
         self.actions.vmc.l0_max = self.vmc_actions.l0_max
         self.actions.vmc.feedforward_force = self.vmc_actions.feedforward_force
-        self.actions.vmc.action_scale_theta = self.vmc_actions.action_scale_theta
-        self.actions.vmc.action_scale_l0 = self.vmc_actions.action_scale_l0
+        self.actions.vmc.action_scale_tp = self.vmc_actions.action_scale_tp
+        self.actions.vmc.action_scale_force = self.vmc_actions.action_scale_force
         self.actions.vmc.action_scale_vel = self.vmc_actions.action_scale_vel
         self.actions.vmc.wheel_damping = self.vmc_actions.wheel_damping
         self.actions.vmc.clip_actions = self.vmc_actions.clip_actions
-        self.actions.vmc.clip_leg_actions = self.vmc_actions.clip_leg_actions
+        self.actions.vmc.clip_tp_actions = self.vmc_actions.clip_tp_actions
+        self.actions.vmc.clip_force_actions = self.vmc_actions.clip_force_actions
         self.actions.vmc.clip_wheel_actions = self.vmc_actions.clip_wheel_actions
         self.actions.vmc.randomize_vmc_gains = True
         self.actions.vmc.randomize_action_delay = True
@@ -745,7 +766,7 @@ def compute_vmc_torques_from_actions(env, actions: torch.Tensor) -> torch.Tensor
     Args:
         env: The ManagerBasedRLEnv instance (must have vmc_actions config).
         actions: Policy actions in task space, shape (num_envs, 6).
-                 Order: [theta0_l, L0_l, w_l, theta0_r, L0_r, w_r]
+                 Order: [Tp_l, deltaF_l, w_l, Tp_r, deltaF_r, w_r]
 
     Returns:
         Joint torques for all 6 DOFs, shape (num_envs, 6).
@@ -775,8 +796,8 @@ def compute_vmc_torques_from_actions(env, actions: torch.Tensor) -> torch.Tensor
         l0_min=vmc_cfg.l0_min,
         l0_max=vmc_cfg.l0_max,
         feedforward_force=vmc_cfg.feedforward_force,
-        action_scale_theta=vmc_cfg.action_scale_theta,
-        action_scale_l0=vmc_cfg.action_scale_l0,
+        action_scale_tp=vmc_cfg.action_scale_tp,
+        action_scale_force=vmc_cfg.action_scale_force,
         action_scale_vel=vmc_cfg.action_scale_vel,
         wheel_damping=vmc_cfg.wheel_damping,
         torque_limits=robot.data.torque_limit,

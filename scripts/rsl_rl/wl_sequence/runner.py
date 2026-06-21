@@ -146,9 +146,11 @@ class WlSequenceRunner:
         # VMC task-space state
         from IRobot_wl.tasks.manager_based.locomotion.velocity.mdp.vmc import compute_vmc_state
         vmc_cfg = self.env.unwrapped.cfg.vmc_actions
-        clip_leg_actions = float(getattr(vmc_cfg, "clip_leg_actions", getattr(vmc_cfg, "clip_actions", 100.0)))
+        clip_tp_actions = float(getattr(vmc_cfg, "clip_tp_actions", getattr(vmc_cfg, "clip_actions", 100.0)))
+        clip_force_actions = float(getattr(vmc_cfg, "clip_force_actions", getattr(vmc_cfg, "clip_actions", 100.0)))
         clip_wheel_actions = float(getattr(vmc_cfg, "clip_wheel_actions", getattr(vmc_cfg, "clip_actions", 100.0)))
-        actions[:, [0, 1, 3, 4]].clamp_(-clip_leg_actions, clip_leg_actions)
+        actions[:, [0, 3]].clamp_(-clip_tp_actions, clip_tp_actions)
+        actions[:, [1, 4]].clamp_(-clip_force_actions, clip_force_actions)
         actions[:, [2, 5]].clamp_(-clip_wheel_actions, clip_wheel_actions)
         if float(getattr(vmc_cfg, "action_scale_vel", 0.0)) == 0.0 or clip_wheel_actions <= 0.0:
             actions[:, [2, 5]] = 0.0
@@ -166,9 +168,10 @@ class WlSequenceRunner:
             theta2_offset=vmc_cfg.theta2_offset,
         )
 
-        # Task-space reference from actions
-        theta0_ref = torch.stack([actions[:, 0], actions[:, 3]], dim=1) * vmc_cfg.action_scale_theta + vmc_cfg.theta0_offset
-        l0_ref = torch.stack([actions[:, 1], actions[:, 4]], dim=1) * vmc_cfg.action_scale_l0 + vmc_cfg.l0_offset
+        # Task-space force/torque from actions
+        tp_cmd = torch.stack([actions[:, 0], actions[:, 3]], dim=1) * vmc_cfg.action_scale_tp
+        delta_force_cmd = torch.stack([actions[:, 1], actions[:, 4]], dim=1) * vmc_cfg.action_scale_force
+        total_force_cmd = delta_force_cmd + vmc_cfg.feedforward_force
         wheel_vel_ref = torch.stack([actions[:, 2], actions[:, 5]], dim=1) * vmc_cfg.action_scale_vel
         wheel_vel_error = wheel_vel_ref - vmc_wheel_vel
         if hasattr(self._robot.data, "torque_limit"):
@@ -224,9 +227,12 @@ class WlSequenceRunner:
         self._prev_debug_base_lin_vel = base_lin_vel.detach().clone()
         self._prev_debug_base_ang_vel = base_ang_vel.detach().clone()
 
-        leg_actions = torch.stack([actions[:, 0], actions[:, 1], actions[:, 3], actions[:, 4]], dim=1)
+        tp_actions = torch.stack([actions[:, 0], actions[:, 3]], dim=1)
+        force_actions = torch.stack([actions[:, 1], actions[:, 4]], dim=1)
+        leg_actions = torch.cat([tp_actions, force_actions], dim=1)
         wheel_actions = torch.stack([actions[:, 2], actions[:, 5]], dim=1)
-        leg_sat_threshold = 0.95 * max(clip_leg_actions, 1.0e-6)
+        tp_sat_threshold = 0.95 * max(clip_tp_actions, 1.0e-6)
+        force_sat_threshold = 0.95 * max(clip_force_actions, 1.0e-6)
         wheel_sat_threshold = 0.95 * max(clip_wheel_actions, 1.0e-6)
         if clip_wheel_actions <= 0.0:
             wheel_sat_frac = torch.zeros((), device=actions.device, dtype=actions.dtype)
@@ -241,14 +247,20 @@ class WlSequenceRunner:
             "raw_action_abs_mean": raw_actions.abs().mean(),
             "raw_action_abs_max": raw_actions.abs().max(),
             "action_sat_frac_0p95": torch.cat(
-                [leg_actions.abs() / max(clip_leg_actions, 1.0e-6), wheel_actions.abs() / max(clip_wheel_actions, 1.0e-6)],
+                [
+                    tp_actions.abs() / max(clip_tp_actions, 1.0e-6),
+                    force_actions.abs() / max(clip_force_actions, 1.0e-6),
+                    wheel_actions.abs() / max(clip_wheel_actions, 1.0e-6),
+                ],
                 dim=1,
             ).gt(0.95).float().mean(),
             "leg_action_abs_mean": leg_actions.abs().mean(),
-            "leg_action_sat_frac_0p95": leg_actions.abs().gt(leg_sat_threshold).float().mean(),
+            "tp_action_sat_frac_0p95": tp_actions.abs().gt(tp_sat_threshold).float().mean(),
+            "force_action_sat_frac_0p95": force_actions.abs().gt(force_sat_threshold).float().mean(),
             "wheel_action_abs_mean": wheel_actions.abs().mean(),
             "wheel_action_sat_frac_0p95": wheel_sat_frac,
-            "clip_leg_actions": torch.tensor(clip_leg_actions, device=actions.device),
+            "clip_tp_actions": torch.tensor(clip_tp_actions, device=actions.device),
+            "clip_force_actions": torch.tensor(clip_force_actions, device=actions.device),
             "clip_wheel_actions": torch.tensor(clip_wheel_actions, device=actions.device),
             "left_torque_mean_abs": left_leg_torque.abs().mean(dim=0),
             "right_torque_mean_abs": right_leg_torque.abs().mean(dim=0),
@@ -314,18 +326,18 @@ class WlSequenceRunner:
             "base_ang_vel_env0": base_ang_vel[0],
             "commands_env0": commands[0],
             "theta0_mean": vmc_state["theta0"].mean(dim=0),
-            "theta0_ref_mean": theta0_ref.mean(dim=0),
-            "theta0_error_abs_mean": (theta0_ref - vmc_state["theta0"]).abs().mean(),
             "theta0_lr_error_abs_mean": (vmc_state["theta0"][:, 0] - vmc_state["theta0"][:, 1]).abs().mean(),
             "L0_mean": vmc_state["L0"].mean(dim=0),
-            "L0_ref_mean": l0_ref.mean(dim=0),
-            "L0_error_abs_mean": (l0_ref - vmc_state["L0"]).abs().mean(),
             "L0_lr_error_abs_mean": (vmc_state["L0"][:, 0] - vmc_state["L0"][:, 1]).abs().mean(),
+            "tp_cmd_mean": tp_cmd.mean(dim=0),
+            "delta_force_cmd_mean": delta_force_cmd.mean(dim=0),
+            "total_force_cmd_mean": total_force_cmd.mean(dim=0),
             "wheel_vel_ref_mean": wheel_vel_ref.abs().mean(dim=0),
             "theta0_env0": vmc_state["theta0"][0],
-            "theta0_ref_env0": theta0_ref[0],
             "L0_env0": vmc_state["L0"][0],
-            "L0_ref_env0": l0_ref[0],
+            "tp_cmd_env0": tp_cmd[0],
+            "delta_force_cmd_env0": delta_force_cmd[0],
+            "total_force_cmd_env0": total_force_cmd[0],
             "joint_wheel_vel_env0": wheel_vel[0],
             "wheel_vel_ref_env0": wheel_vel_ref[0],
             "wheel_radius": torch.tensor(wheel_speed_radius, device=actions.device),
@@ -385,10 +397,12 @@ class WlSequenceRunner:
                 "raw_action_abs_max": self._as_float(leg_stats["raw_action_abs_max"]),
                 "action_sat_frac_0p95": self._as_float(leg_stats["action_sat_frac_0p95"]),
                 "leg_action_abs_mean": self._as_float(leg_stats["leg_action_abs_mean"]),
-                "leg_action_sat_frac_0p95": self._as_float(leg_stats["leg_action_sat_frac_0p95"]),
+                "tp_action_sat_frac_0p95": self._as_float(leg_stats["tp_action_sat_frac_0p95"]),
+                "force_action_sat_frac_0p95": self._as_float(leg_stats["force_action_sat_frac_0p95"]),
                 "wheel_action_abs_mean": self._as_float(leg_stats["wheel_action_abs_mean"]),
                 "wheel_action_sat_frac_0p95": self._as_float(leg_stats["wheel_action_sat_frac_0p95"]),
-                "clip_leg_actions": self._as_float(leg_stats["clip_leg_actions"]),
+                "clip_tp_actions": self._as_float(leg_stats["clip_tp_actions"]),
+                "clip_force_actions": self._as_float(leg_stats["clip_force_actions"]),
                 "clip_wheel_actions": self._as_float(leg_stats["clip_wheel_actions"]),
             },
             "command_tracking": {
@@ -451,10 +465,11 @@ class WlSequenceRunner:
                 "tilt_xy_abs_max": self._as_float(leg_stats["tilt_xy_abs_max"]),
                 "upright_factor_mean": self._as_float(leg_stats["upright_factor_mean"]),
                 "projected_gravity_mean": self._as_list(leg_stats["projected_gravity_mean"]),
-                "theta0_error_abs_mean": self._as_float(leg_stats["theta0_error_abs_mean"]),
                 "theta0_lr_error_abs_mean": self._as_float(leg_stats["theta0_lr_error_abs_mean"]),
-                "L0_error_abs_mean": self._as_float(leg_stats["L0_error_abs_mean"]),
                 "L0_lr_error_abs_mean": self._as_float(leg_stats["L0_lr_error_abs_mean"]),
+                "tp_cmd_mean_nm": self._as_list(leg_stats["tp_cmd_mean"]),
+                "delta_force_cmd_mean_n": self._as_list(leg_stats["delta_force_cmd_mean"]),
+                "total_force_cmd_mean_n": self._as_list(leg_stats["total_force_cmd_mean"]),
             },
             "env0": {
                 "command": self._as_list(leg_stats["commands_env0"]),
@@ -466,9 +481,10 @@ class WlSequenceRunner:
                 "wheel_vel_ref": self._as_list(leg_stats["wheel_vel_ref_env0"]),
                 "wheel_torque": self._as_list(leg_stats["wheel_torque_env0"]),
                 "theta0": self._as_list(leg_stats["theta0_env0"]),
-                "theta0_ref": self._as_list(leg_stats["theta0_ref_env0"]),
                 "L0": self._as_list(leg_stats["L0_env0"]),
-                "L0_ref": self._as_list(leg_stats["L0_ref_env0"]),
+                "tp_cmd": self._as_list(leg_stats["tp_cmd_env0"]),
+                "delta_force_cmd": self._as_list(leg_stats["delta_force_cmd_env0"]),
+                "total_force_cmd": self._as_list(leg_stats["total_force_cmd_env0"]),
             },
             "rewards_per_second": reward_stats,
         }
@@ -486,10 +502,12 @@ class WlSequenceRunner:
             "Diagnostics/raw_action_abs_max": leg_stats["raw_action_abs_max"],
             "Diagnostics/action_sat_frac_0p95": leg_stats["action_sat_frac_0p95"],
             "Diagnostics/leg_action_abs_mean": leg_stats["leg_action_abs_mean"],
-            "Diagnostics/leg_action_sat_frac_0p95": leg_stats["leg_action_sat_frac_0p95"],
+            "Diagnostics/tp_action_sat_frac_0p95": leg_stats["tp_action_sat_frac_0p95"],
+            "Diagnostics/force_action_sat_frac_0p95": leg_stats["force_action_sat_frac_0p95"],
             "Diagnostics/wheel_action_abs_mean": leg_stats["wheel_action_abs_mean"],
             "Diagnostics/wheel_action_sat_frac_0p95": leg_stats["wheel_action_sat_frac_0p95"],
-            "Diagnostics/clip_leg_actions": leg_stats["clip_leg_actions"],
+            "Diagnostics/clip_tp_actions": leg_stats["clip_tp_actions"],
+            "Diagnostics/clip_force_actions": leg_stats["clip_force_actions"],
             "Diagnostics/clip_wheel_actions": leg_stats["clip_wheel_actions"],
             "Diagnostics/lin_x_error_abs_mean": leg_stats["lin_x_error_abs_mean"],
             "Diagnostics/lin_x_error_abs_max": leg_stats["lin_x_error_abs_max"],
@@ -526,10 +544,11 @@ class WlSequenceRunner:
             "Diagnostics/tilt_xy_abs_mean": leg_stats["tilt_xy_abs_mean"],
             "Diagnostics/tilt_xy_abs_max": leg_stats["tilt_xy_abs_max"],
             "Diagnostics/upright_factor_mean": leg_stats["upright_factor_mean"],
-            "Diagnostics/theta0_error_abs_mean": leg_stats["theta0_error_abs_mean"],
             "Diagnostics/theta0_lr_error_abs_mean": leg_stats["theta0_lr_error_abs_mean"],
-            "Diagnostics/L0_error_abs_mean": leg_stats["L0_error_abs_mean"],
             "Diagnostics/L0_lr_error_abs_mean": leg_stats["L0_lr_error_abs_mean"],
+            "Diagnostics/tp_cmd_abs_mean_nm": leg_stats["tp_cmd_mean"].abs().mean(),
+            "Diagnostics/delta_force_cmd_abs_mean_n": leg_stats["delta_force_cmd_mean"].abs().mean(),
+            "Diagnostics/total_force_cmd_mean_n": leg_stats["total_force_cmd_mean"].mean(),
             "Diagnostics/action_scale_vel_rad_s": leg_stats["action_scale_vel"],
             "Diagnostics/max_wheel_ground_speed_from_action_m_s": leg_stats["max_wheel_ground_speed_from_action"],
             "Diagnostics/max_wheel_ground_speed_from_clip_m_s": leg_stats["max_wheel_ground_speed_from_clip"],
@@ -673,10 +692,10 @@ class WlSequenceRunner:
         print(f"{'Time elapsed:':>34} {self.tot_time:.1f}s")
         print(f"{'ETA:':>34} {eta_seconds:.1f}s")
         print("-" * width)
-        print(f"{'Left action |mean abs| [theta, L0, wheel]:':>34} {self._format_tensor(leg_stats['left_action_mean_abs'])}")
-        print(f"{'Right action |mean abs| [theta, L0, wheel]:':>34} {self._format_tensor(leg_stats['right_action_mean_abs'])}")
-        print(f"{'Env0 left action [theta, L0, wheel]:':>34} {self._format_tensor(leg_stats['left_action_env0'])}")
-        print(f"{'Env0 right action [theta, L0, wheel]:':>34} {self._format_tensor(leg_stats['right_action_env0'])}")
+        print(f"{'Left action |mean abs| [Tp, dF, wheel]:':>34} {self._format_tensor(leg_stats['left_action_mean_abs'])}")
+        print(f"{'Right action |mean abs| [Tp, dF, wheel]:':>34} {self._format_tensor(leg_stats['right_action_mean_abs'])}")
+        print(f"{'Env0 left action [Tp, dF, wheel]:':>34} {self._format_tensor(leg_stats['left_action_env0'])}")
+        print(f"{'Env0 right action [Tp, dF, wheel]:':>34} {self._format_tensor(leg_stats['right_action_env0'])}")
         print(f"{'Left leg torque |mean abs| [hip, knee]:':>34} {self._format_tensor(leg_stats['left_torque_mean_abs'])}")
         print(f"{'Right leg torque |mean abs| [hip, knee]:':>34} {self._format_tensor(leg_stats['right_torque_mean_abs'])}")
         print(f"{'Env0 left leg torque [hip, knee]:':>34} {self._format_tensor(leg_stats['left_torque_env0'])}")
@@ -687,13 +706,15 @@ class WlSequenceRunner:
         print(f"{'Env0 wheel vel [L, R]:':>34} {self._format_tensor(leg_stats['wheel_vel_env0'])}")
         print(f"{'Env0 wheel vel ref [L, R]:':>34} {self._format_tensor(leg_stats['wheel_vel_ref_env0'])}")
         print(f"{'theta0 |mean| [L, R]:':>34} {self._format_tensor(leg_stats['theta0_mean'])}")
-        print(f"{'theta0 ref |mean| [L, R]:':>34} {self._format_tensor(leg_stats['theta0_ref_mean'])}")
         print(f"{'L0 |mean| [L, R]:':>34} {self._format_tensor(leg_stats['L0_mean'])}")
-        print(f"{'L0 ref |mean| [L, R]:':>34} {self._format_tensor(leg_stats['L0_ref_mean'])}")
+        print(f"{'Tp cmd |mean| [L, R] Nm:':>34} {self._format_tensor(leg_stats['tp_cmd_mean'])}")
+        print(f"{'deltaF cmd |mean| [L, R] N:':>34} {self._format_tensor(leg_stats['delta_force_cmd_mean'])}")
+        print(f"{'total F cmd |mean| [L, R] N:':>34} {self._format_tensor(leg_stats['total_force_cmd_mean'])}")
         print(f"{'Env0 theta0 [L, R]:':>34} {self._format_tensor(leg_stats['theta0_env0'])}")
-        print(f"{'Env0 theta0 ref [L, R]:':>34} {self._format_tensor(leg_stats['theta0_ref_env0'])}")
         print(f"{'Env0 L0 [L, R]:':>34} {self._format_tensor(leg_stats['L0_env0'])}")
-        print(f"{'Env0 L0 ref [L, R]:':>34} {self._format_tensor(leg_stats['L0_ref_env0'])}")
+        print(f"{'Env0 Tp cmd [L, R] Nm:':>34} {self._format_tensor(leg_stats['tp_cmd_env0'])}")
+        print(f"{'Env0 deltaF cmd [L, R] N:':>34} {self._format_tensor(leg_stats['delta_force_cmd_env0'])}")
+        print(f"{'Env0 total F cmd [L, R] N:':>34} {self._format_tensor(leg_stats['total_force_cmd_env0'])}")
         print(f"{'Base lin vel |mean| [x,y,z]:':>34} {self._format_tensor(leg_stats['base_lin_vel_mean'])}")
         print(f"{'Commands |mean| [x,ang,head]:':>34} {self._format_tensor(leg_stats['commands_mean'])}")
         print(f"{'Env0 base lin vel [x,y,z]:':>34} {self._format_tensor(leg_stats['base_lin_vel_env0'])}")

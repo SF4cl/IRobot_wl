@@ -371,8 +371,9 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             theta2_offset=vmc_cfg.theta2_offset,
         )
 
-        theta0_ref = torch.stack([actions[:, 0], actions[:, 3]], dim=1) * vmc_cfg.action_scale_theta
-        l0_ref = torch.stack([actions[:, 1], actions[:, 4]], dim=1) * vmc_cfg.action_scale_l0 + vmc_cfg.l0_offset
+        tp_cmd = torch.stack([actions[:, 0], actions[:, 3]], dim=1) * vmc_cfg.action_scale_tp
+        delta_force_cmd = torch.stack([actions[:, 1], actions[:, 4]], dim=1) * vmc_cfg.action_scale_force
+        total_force_cmd = delta_force_cmd + vmc_cfg.feedforward_force
         wheel_vel_ref = torch.stack([actions[:, 2], actions[:, 5]], dim=1) * vmc_cfg.action_scale_vel
 
         w = 60
@@ -384,9 +385,10 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
             print(f"  Keyboard   [vx,vy,yaw]:    {_fmt(keyboard_cmd[0])}")
         print(f"  --- VMC task space ---")
         print(f"  theta0     [L, R]:         {_fmt(vmc_state['theta0'][0])}")
-        print(f"  theta0 ref [L, R]:         {_fmt(theta0_ref[0])}")
         print(f"  L0         [L, R]:         {_fmt(vmc_state['L0'][0])}")
-        print(f"  L0 ref     [L, R]:         {_fmt(l0_ref[0])}")
+        print(f"  Tp cmd     [L, R] Nm:      {_fmt(tp_cmd[0])}")
+        print(f"  deltaF cmd [L, R] N:       {_fmt(delta_force_cmd[0])}")
+        print(f"  total F    [L, R] N:       {_fmt(total_force_cmd[0])}")
         print(f"  --- Wheels ---")
         print(f"  joint wheel vel [L, R]:    {_fmt(wheel_vel[0])}")
         print(f"  wheel vel ref [L, R]:      {_fmt(wheel_vel_ref[0])}")
@@ -397,8 +399,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         print(f"  left  [hip, knee]:         {_fmt(left_torque[0])}")
         print(f"  right [hip, knee]:         {_fmt(right_torque[0])}")
         print(f"  --- Actions (raw) ---")
-        print(f"  left  [theta, L0, wheel]:  {_fmt(actions[0, :3])}")
-        print(f"  right [theta, L0, wheel]:  {_fmt(actions[0, 3:6])}")
+        print(f"  left  [Tp, dF, wheel]:     {_fmt(actions[0, :3])}")
+        print(f"  right [Tp, dF, wheel]:     {_fmt(actions[0, 3:6])}")
         print("#" * w)
 
     # reset environment

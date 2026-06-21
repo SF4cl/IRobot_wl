@@ -855,8 +855,8 @@ def leg_angle_symmetry(
 def vmc_action_symmetry(
     env: ManagerBasedRLEnv,
     action_name: str = "vmc",
-    theta_scale: float = 1.0,
-    l0_scale: float = 1.0,
+    tp_scale: float = 1.0,
+    force_scale: float = 1.0,
     wheel_scale: float = 0.25,
 ) -> torch.Tensor:
     """Penalize left/right task-space action mismatch for symmetric gliding."""
@@ -865,24 +865,10 @@ def vmc_action_symmetry(
     else:
         action_term = env.action_manager.get_term(action_name)
         actions = getattr(action_term, "processed_actions", action_term.raw_actions)
-    theta_diff = torch.square(actions[:, 0] - actions[:, 3]) * theta_scale
-    l0_diff = torch.square(actions[:, 1] - actions[:, 4]) * l0_scale
+    tp_diff = torch.square(actions[:, 0] - actions[:, 3]) * tp_scale
+    force_diff = torch.square(actions[:, 1] - actions[:, 4]) * force_scale
     wheel_diff = torch.square(actions[:, 2] - actions[:, 5]) * wheel_scale
-    reward = theta_diff + l0_diff + wheel_diff
-    reward *= torch.clamp(-env.scene["robot"].data.projected_gravity_b[:, 2], 0, 0.7) / 0.7
-    return reward
-
-
-def vmc_theta_ref_symmetry(
-    env: ManagerBasedRLEnv,
-    action_name: str = "vmc",
-    action_scale_theta: float = 0.5,
-) -> torch.Tensor:
-    """Penalize left/right VMC target leg-angle mismatch after action clipping."""
-    action_term = env.action_manager.get_term(action_name)
-    actions = getattr(action_term, "processed_actions", action_term.raw_actions)
-    theta_ref_diff = (actions[:, 0] - actions[:, 3]) * action_scale_theta
-    reward = torch.square(theta_ref_diff)
+    reward = tp_diff + force_diff + wheel_diff
     reward *= torch.clamp(-env.scene["robot"].data.projected_gravity_b[:, 2], 0, 0.7) / 0.7
     return reward
 

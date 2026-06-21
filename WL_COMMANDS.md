@@ -24,11 +24,9 @@ pip install -e source/IRobot_wl
 
 ## 2. 任务名
 
-当前可用的 WL 任务名：
+当前保留的 WL 任务名：
 
 ```bash
-IRobot-WL-Velocity-Flat-v0
-IRobot-WL-Velocity-Rough-v0
 IRobot-WL-Velocity-VMC-Flat-v0
 IRobot-WL-Velocity-VMC-Rough-v0
 ```
@@ -39,7 +37,21 @@ IRobot-WL-Velocity-VMC-Rough-v0
 IRobot-WL-Velocity-VMC-Flat-v0
 ```
 
-## 3. 开始训练
+## 3. VMC 动作语义
+
+VMC policy 仍然输出 6 维 action，但腿部通道现在不再表示目标腿摆角 `theta0` 和目标腿长 `L0`，而是直接表示任务空间力/力矩：
+
+```text
+[Tp_l, deltaF_l, wheel_l, Tp_r, deltaF_r, wheel_r]
+```
+
+- `Tp`：腿摆角方向的任务空间力矩，经过 `action_scale_tp` 缩放后通过 VMC 雅可比映射到髋/膝关节力矩。
+- `deltaF`：支撑腿轴向残差力，经过 `action_scale_force` 缩放。
+- 最终轴向支撑力为 `deltaF + feedforward_force`。也就是说 policy 输出 0 时，腿部仍有配置里的前馈支撑力。
+- `wheel`：轮速命令，语义保持不变。
+- 旧的 target-PD 配置字段仍保留，主要用于兼容旧配置；当前腿部 action 路径不再用 policy action 生成目标腿角或目标腿长。
+
+## 4. 开始训练
 
 VMC Flat 训练：
 
@@ -57,20 +69,9 @@ python scripts/rsl_rl/train.py \
   --task IRobot-WL-Velocity-VMC-Rough-v0 \
   --agent rsl_rl_cfg_entry_point \
   --headless
-
-  python scripts/rsl_rl/train.py --task IRobot-WL-Velocity-VMC-Rough-v0 --agent rsl_rl_cfg_entry_point --headless
 ```
 
-普通 Flat 训练：
-
-```bash
-python scripts/rsl_rl/train.py \
-  --task IRobot-WL-Velocity-Flat-v0 \
-  --agent rsl_rl_cfg_entry_point \
-  --headless
-```
-
-## 4. 指定环境数训练
+## 5. 指定环境数训练
 
 例如设置 `num_envs=512`：
 
@@ -82,7 +83,7 @@ python scripts/rsl_rl/train.py \
   --headless
 ```
 
-## 5. 指定最大迭代数
+## 6. 指定最大迭代数
 
 例如只训练 500 轮：
 
@@ -94,7 +95,7 @@ python scripts/rsl_rl/train.py \
   --headless
 ```
 
-## 6. 断点续训
+## 7. 断点续训
 
 指定某次 run 和 checkpoint：
 
@@ -127,7 +128,7 @@ python scripts/rsl_rl/train.py \
 - `--load_run` 对应某次训练目录名
 - `--checkpoint` 对应 checkpoint 文件名或正则
 
-## 7. Play 测试
+## 8. Play 测试
 
 播放某次训练的最新模型：
 
@@ -174,7 +175,7 @@ python scripts/rsl_rl/play.py \
   --keyboard
 ```
 
-## 8. 录视频
+## 9. 录视频
 
 训练时录视频：
 
@@ -197,7 +198,7 @@ python scripts/rsl_rl/play.py \
   --video_length 300
 ```
 
-## 9. TensorBoard
+## 10. TensorBoard
 
 启动 TensorBoard：
 
@@ -217,7 +218,7 @@ tensorboard --logdir logs/rsl_rl/wl_vmc_flat --port 6006
 http://localhost:6006
 ```
 
-## 10. 日志和模型保存位置
+## 11. 日志和模型保存位置
 
 训练日志默认保存在：
 
@@ -251,7 +252,7 @@ ls -lt logs/rsl_rl/wl_vmc_flat
 ls logs/rsl_rl/wl_vmc_flat/2026-06-09_12-00-00
 ```
 
-## 11. 常用排查
+## 12. 常用排查
 
 列出当前日志目录：
 
@@ -265,7 +266,7 @@ find logs/rsl_rl -maxdepth 3 -type f | tail -n 50
 find logs/rsl_rl/wl_vmc_flat -maxdepth 2 -type f | grep 'model_.*\.pt' | sort
 ```
 
-## 12. 推荐使用顺序
+## 13. 推荐使用顺序
 
 1. 先安装开发包
 2. 跑 `VMC Flat` 训练
@@ -273,15 +274,5 @@ find logs/rsl_rl/wl_vmc_flat -maxdepth 2 -type f | grep 'model_.*\.pt' | sort
 4. 用 `--resume` 继续训练
 5. 用 `tensorboard` 看 reward 和 episode length 曲线
 
-ssh -p 37023 root@connect.westc.seetacloud.com
-RCZQCoglue1U
 
-scp -P 37023 -r root@connect.westc.seetacloud.com:/root/autodl-tmp/wl_workspace/IRobot_wl/logs/rsl_rl/wl_vmc_flat_self_right/2026-06-20_11-16-23 D:\rm\2026_code\rl\IRobot_wl\logs\rsl_rl\wl_vmc_flat_self_right
-
-python scripts/rsl_rl/train.py --task IRobot-WL-Velocity-VMC-Flat-Recovery-v0 --agent rsl_rl_cfg_entry_point --headless
-
-python scripts/rsl_rl/play.py --task IRobot-WL-Velocity-VMC-Flat-Recovery-v0 --agent rsl_rl_cfg_entry_point --num_envs 32
-
-python scripts/rsl_rl/play.py --task IRobot-WL-Velocity-VMC-Flat-Recovery-v0 --agent rsl_rl_cfg_entry_point --load_run 2026-06-19_19-24-16 --checkpoint model_7250.pt --num_envs 32
-
-python scripts/rsl_rl/play.py --task IRobot-WL-Velocity-VMC-Flat-SelfRight-v0 --agent rsl_rl_cfg_entry_point --num_envs 32
+python scripts\rsl_rl\train.py --task IRobot-WL-Velocity-VMC-Flat-v0 --agent rsl_rl_cfg_entry_point --num_envs 512 --max_iterations 200 --headless

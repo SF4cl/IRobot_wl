@@ -36,8 +36,8 @@ parser.add_argument("--steps", type=int, default=200, help="Number of constant-a
 parser.add_argument("--print_every", type=int, default=50, help="Print wheel state every N steps.")
 parser.add_argument("--left_wheel_action", type=float, default=0.5, help="Raw action for left wheel.")
 parser.add_argument("--right_wheel_action", type=float, default=0.5, help="Raw action for right wheel.")
-parser.add_argument("--theta_action", type=float, default=0.0, help="Raw action for both leg angles.")
-parser.add_argument("--l0_action", type=float, default=0.0, help="Raw action for both leg lengths.")
+parser.add_argument("--tp_action", type=float, default=0.0, help="Raw action for both leg swing torques.")
+parser.add_argument("--force_action", type=float, default=0.0, help="Raw action for both residual axial leg forces.")
 parser.add_argument("--wheel_damping", type=float, default=None, help="Temporarily override VMC wheel damping.")
 parser.add_argument("--wheel_torque_limit", type=float, default=None, help="Temporarily override both VMC wheel torque limits.")
 parser.add_argument("--sim_dt", type=float, default=None, help="Temporarily override physics simulation dt.")
@@ -194,11 +194,11 @@ def _wheel_axis_w(robot, urdf_path: str) -> torch.Tensor:
 
 def _make_action(env) -> torch.Tensor:
     action = torch.zeros(env.action_space.shape, device=env.unwrapped.device)
-    action[:, 0] = args_cli.theta_action
-    action[:, 1] = args_cli.l0_action
+    action[:, 0] = args_cli.tp_action
+    action[:, 1] = args_cli.force_action
     action[:, 2] = args_cli.left_wheel_action
-    action[:, 3] = args_cli.theta_action
-    action[:, 4] = args_cli.l0_action
+    action[:, 3] = args_cli.tp_action
+    action[:, 4] = args_cli.force_action
     action[:, 5] = args_cli.right_wheel_action
     return action
 
@@ -256,8 +256,8 @@ def _print_wheel_state(env, action: torch.Tensor, step: int, phase: str) -> None
         l0_min=cfg.l0_min,
         l0_max=cfg.l0_max,
         feedforward_force=cfg.feedforward_force,
-        action_scale_theta=cfg.action_scale_theta,
-        action_scale_l0=cfg.action_scale_l0,
+        action_scale_tp=cfg.action_scale_tp,
+        action_scale_force=cfg.action_scale_force,
         action_scale_vel=cfg.action_scale_vel,
         wheel_damping=cfg.wheel_damping,
         torque_limits=configured_torque_limits,
