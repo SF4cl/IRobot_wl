@@ -33,10 +33,8 @@ class WLVMCVanillaFlatEnvCfg(WLVMCVanillaRoughEnvCfg):
         # Override default leg length to be shorter for flat terrain
         self.vmc_actions.l0_offset = 0.17
         self.actions.vmc.l0_offset = 0.17
-        self.vmc_actions.action_scale_vel = 52.0
-        self.actions.vmc.action_scale_vel = 52.0
-        self.vmc_actions.wheel_damping = 0.08
-        self.actions.vmc.wheel_damping = 0.08
+        self.vmc_actions.action_scale_wheel_torque = 4.0
+        self.actions.vmc.action_scale_wheel_torque = 4.0
         self.vmc_actions.clip_tp_actions = 1.0
         self.actions.vmc.clip_tp_actions = 1.0
         self.vmc_actions.clip_force_actions = 1.0
@@ -50,10 +48,10 @@ class WLVMCVanillaFlatEnvCfg(WLVMCVanillaRoughEnvCfg):
 
         self.rewards.vmc_action_symmetry.weight = -0.15
         self.rewards.vmc_action_symmetry.params["wheel_scale"] = 0.0
-        self.rewards.theta0_nominal.weight = -0.1
+        self.rewards.theta0_nominal.weight = -0.6
         self.rewards.leg_length_symmetry.weight = -1.0
-        self.rewards.leg_angle_symmetry.weight = -1.55
-        self.rewards.action_rate_l2.weight = -0.005
+        self.rewards.leg_angle_symmetry.weight = -2.2
+        self.rewards.action_rate_l2.weight = -0.02
         self.rewards.stand_still.weight = -0.5
         self.rewards.stand_still.params["lin_x_threshold"] = 0.05
         self.rewards.stand_still.params["ang_z_threshold"] = 0.05

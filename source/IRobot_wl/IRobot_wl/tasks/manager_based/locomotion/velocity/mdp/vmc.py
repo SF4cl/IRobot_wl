@@ -224,18 +224,20 @@ def compute_vmc_action(
     feedforward_force: float,
     action_scale_tp: float,
     action_scale_force: float,
-    action_scale_vel: float,
-    wheel_damping: float,
+    action_scale_wheel_torque: float,
     torque_limits: torch.Tensor,
     torque_scale: torch.Tensor | float = 1.0,
-    disabled_wheel_brake_damping: float = 0.0,
 ) -> torch.Tensor:
     """Compute joint torques from VMC task-space actions.
 
     This function takes policy actions in task-space coordinates and converts them
     to joint torques using Virtual Model Control. The action space is 6-dimensional
     for a bipedal robot with 2 legs:
-      [Tp_left, deltaF_left, wheel_vel_left, Tp_right, deltaF_right, wheel_vel_right]
+      [Tp_left, deltaF_left, wheel_torque_left, Tp_right, deltaF_right, wheel_torque_right]
+
+    Leg actions (Tp, deltaF) are converted through VMC Jacobian transpose.
+    Wheel actions are direct torque commands — the policy learns its own
+    velocity control, bypassing the damping-based PD of the old design.
 
     Args:
         actions: Policy actions in task space, shape (num_envs, 6).
@@ -254,9 +256,7 @@ def compute_vmc_action(
         feedforward_force: Gravity compensation force [N].
         action_scale_tp: Scale for leg swing torque actions [Nm].
         action_scale_force: Scale for residual axial force actions [N].
-        action_scale_vel: Scale for wheel velocity actions.
-        wheel_damping: Damping for wheel velocity control [Nm*s/rad].
-        disabled_wheel_brake_damping: Passive brake damping when wheel velocity actions are disabled [Nm*s/rad].
+        action_scale_wheel_torque: Scale for wheel direct torque actions [Nm].
         torque_limits: Joint torque limits, shape (num_dof,).
 
     Returns:
@@ -265,15 +265,13 @@ def compute_vmc_action(
     num_envs = actions.shape[0]
     num_dof = dof_pos.shape[1]
 
-    # --- Parse task-space force actions ---
-    # The policy outputs a residual axial force. Adding feedforward_force keeps
-    # zero policy action as a reasonable support-force baseline.
+    # --- Parse task-space force/torque actions ---
     torque_leg = torch.stack([actions[:, 0], actions[:, 3]], dim=1) * action_scale_tp
     force_leg_delta = torch.stack([actions[:, 1], actions[:, 4]], dim=1) * action_scale_force
     force_leg = force_leg_delta + feedforward_force
 
-    wheel_vel_ref = torch.stack([actions[:, 2], actions[:, 5]], dim=1)  # (num_envs, 2)
-    wheel_vel_ref = wheel_vel_ref * action_scale_vel
+    # Direct wheel torque: policy action * scale → Nm
+    torque_wheel = torch.stack([actions[:, 2], actions[:, 5]], dim=1) * action_scale_wheel_torque
 
     state = compute_vmc_state(
         dof_pos=dof_pos,
@@ -295,12 +293,6 @@ def compute_vmc_action(
     # --- VMC: task-space force/torque to joint torques ---
     T1, T2 = vmc_torques(theta0, theta1, theta2, L0, force_leg, torque_leg, l1, l2)
 
-    # --- Wheel velocity PD control ---
-    if action_scale_vel == 0.0 and disabled_wheel_brake_damping > 0.0:
-        torque_wheel = disabled_wheel_brake_damping * wheel_vel
-    else:
-        torque_wheel = wheel_damping * (wheel_vel_ref - wheel_vel)
-
     # --- Assemble full torque vector ---
     torques = torch.zeros(num_envs, num_dof, device=actions.device, dtype=actions.dtype)
 
@@ -312,8 +304,7 @@ def compute_vmc_action(
     torques[:, leg_joint_indices[2]] = -T1[:, 1]  # right hip
     torques[:, leg_joint_indices[3]] = -T2[:, 1]  # right knee
 
-    # Wheels: use the same sign as the measured joint velocity so the damping
-    # controller drives wheel_vel toward wheel_vel_ref on both sides.
+    # Wheels: direct torque from policy action
     torques[:, wheel_joint_indices[0]] = torque_wheel[:, 0]  # left wheel
     torques[:, wheel_joint_indices[1]] = torque_wheel[:, 1]  # right wheel
 
@@ -354,7 +345,6 @@ class WLVMCAction(ActionTerm):
         self._kd_theta = torch.full((self.num_envs, 1), cfg.kd_theta, device=self.device)
         self._kp_l0 = torch.full((self.num_envs, 1), cfg.kp_l0, device=self.device)
         self._kd_l0 = torch.full((self.num_envs, 1), cfg.kd_l0, device=self.device)
-        self._wheel_damping = torch.full((self.num_envs, 1), cfg.wheel_damping, device=self.device)
         self._torque_scale = torch.ones((self.num_envs, 6), device=self.device)
 
         if cfg.randomize_vmc_gains:
@@ -380,7 +370,6 @@ class WLVMCAction(ActionTerm):
         self._kd_theta[:] = self.cfg.kd_theta * (low + (high - low) * torch.rand(self.num_envs, 1, device=self.device))
         self._kp_l0[:] = self.cfg.kp_l0 * (low + (high - low) * torch.rand(self.num_envs, 1, device=self.device))
         self._kd_l0[:] = self.cfg.kd_l0 * (low + (high - low) * torch.rand(self.num_envs, 1, device=self.device))
-        self._wheel_damping[:] = self.cfg.wheel_damping * (low + (high - low) * torch.rand(self.num_envs, 1, device=self.device))
         self._torque_scale[:] = low + (high - low) * torch.rand(self.num_envs, 6, device=self.device)
 
     @property
@@ -427,8 +416,6 @@ class WLVMCAction(ActionTerm):
         self._processed_actions[:, [0, 3]].clamp_(-self.cfg.clip_tp_actions, self.cfg.clip_tp_actions)
         self._processed_actions[:, [1, 4]].clamp_(-self.cfg.clip_force_actions, self.cfg.clip_force_actions)
         self._processed_actions[:, [2, 5]].clamp_(-self.cfg.clip_wheel_actions, self.cfg.clip_wheel_actions)
-        if self.cfg.action_scale_vel == 0.0 or self.cfg.clip_wheel_actions <= 0.0:
-            self._processed_actions[:, [2, 5]] = 0.0
 
     def apply_actions(self):
         self._action_fifo[:, 1:, :] = self._action_fifo[:, :-1, :].clone()
@@ -457,11 +444,9 @@ class WLVMCAction(ActionTerm):
             feedforward_force=self.cfg.feedforward_force,
             action_scale_tp=self.cfg.action_scale_tp,
             action_scale_force=self.cfg.action_scale_force,
-            action_scale_vel=self.cfg.action_scale_vel,
-            wheel_damping=self._wheel_damping,
+            action_scale_wheel_torque=self.cfg.action_scale_wheel_torque,
             torque_limits=self._asset.data.soft_joint_pos_limits.new_tensor(self.cfg.torque_limits),
             torque_scale=self._torque_scale,
-            disabled_wheel_brake_damping=self.cfg.disabled_wheel_brake_damping,
         )
         self._last_torques[:] = torques
         self._asset.set_joint_effort_target(torques)
@@ -507,9 +492,7 @@ class WLVMCActionCfg(ActionTermCfg):
     feedforward_force: float = 40.0
     action_scale_tp: float = 15.0
     action_scale_force: float = 40.0
-    action_scale_vel: float = 10.0
-    wheel_damping: float = 0.05
-    disabled_wheel_brake_damping: float = 0.0
+    action_scale_wheel_torque: float = 4.0
     clip_actions: float = 100.0
     clip_tp_actions: float = 1.0
     clip_force_actions: float = 1.0

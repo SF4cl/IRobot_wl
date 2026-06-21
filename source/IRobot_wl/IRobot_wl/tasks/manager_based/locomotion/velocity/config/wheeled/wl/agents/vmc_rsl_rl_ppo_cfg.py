@@ -22,7 +22,7 @@ class WLVMCVanillaRoughPPORunnerCfg(RslRlOnPolicyRunnerCfg):
         critic_hidden_dims=[256, 128, 64],
         activation="elu",
     )
-    policy.num_encoder_obs = 27 * 5
+    policy.num_encoder_obs = 25 * 5
     policy.latent_dim = 3
     policy.encoder_hidden_dims = [128, 64]
     algorithm = RslRlPpoAlgorithmCfg(

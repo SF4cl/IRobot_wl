@@ -374,7 +374,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         tp_cmd = torch.stack([actions[:, 0], actions[:, 3]], dim=1) * vmc_cfg.action_scale_tp
         delta_force_cmd = torch.stack([actions[:, 1], actions[:, 4]], dim=1) * vmc_cfg.action_scale_force
         total_force_cmd = delta_force_cmd + vmc_cfg.feedforward_force
-        wheel_vel_ref = torch.stack([actions[:, 2], actions[:, 5]], dim=1) * vmc_cfg.action_scale_vel
+        wheel_torque_cmd = torch.stack([actions[:, 2], actions[:, 5]], dim=1) * vmc_cfg.action_scale_wheel_torque
 
         w = 60
         print("#" * w)
@@ -391,7 +391,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         print(f"  total F    [L, R] N:       {_fmt(total_force_cmd[0])}")
         print(f"  --- Wheels ---")
         print(f"  joint wheel vel [L, R]:    {_fmt(wheel_vel[0])}")
-        print(f"  wheel vel ref [L, R]:      {_fmt(wheel_vel_ref[0])}")
+        print(f"  wheel torque cmd [L, R]:   {_fmt(wheel_torque_cmd[0])}")
         print(f"  VMC wheel vel [L, R]:      {_fmt(vmc_wheel_vel[0])}")
         print(f"  joint torque  [L, R]:      {_fmt(wheel_torque[0])}")
         print(f"  VMC torque    [L, R]:      {_fmt(vmc_wheel_torque[0])}")

@@ -152,8 +152,6 @@ class WlSequenceRunner:
         actions[:, [0, 3]].clamp_(-clip_tp_actions, clip_tp_actions)
         actions[:, [1, 4]].clamp_(-clip_force_actions, clip_force_actions)
         actions[:, [2, 5]].clamp_(-clip_wheel_actions, clip_wheel_actions)
-        if float(getattr(vmc_cfg, "action_scale_vel", 0.0)) == 0.0 or clip_wheel_actions <= 0.0:
-            actions[:, [2, 5]] = 0.0
         left_action = actions[:, :3]
         right_action = actions[:, 3:6]
         vmc_state = compute_vmc_state(
@@ -172,8 +170,8 @@ class WlSequenceRunner:
         tp_cmd = torch.stack([actions[:, 0], actions[:, 3]], dim=1) * vmc_cfg.action_scale_tp
         delta_force_cmd = torch.stack([actions[:, 1], actions[:, 4]], dim=1) * vmc_cfg.action_scale_force
         total_force_cmd = delta_force_cmd + vmc_cfg.feedforward_force
-        wheel_vel_ref = torch.stack([actions[:, 2], actions[:, 5]], dim=1) * vmc_cfg.action_scale_vel
-        wheel_vel_error = wheel_vel_ref - vmc_wheel_vel
+        wheel_torque_cmd = torch.stack([actions[:, 2], actions[:, 5]], dim=1) * vmc_cfg.action_scale_wheel_torque
+        wheel_torque_error = wheel_torque_cmd - wheel_torque
         if hasattr(self._robot.data, "torque_limit"):
             wheel_torque_limit = self._robot.data.torque_limit[:, self._wheel_joint_ids].mean(dim=0)
         else:
@@ -273,13 +271,11 @@ class WlSequenceRunner:
             "wheel_vel_mean_abs": vmc_wheel_vel.abs().mean(dim=0),
             "wheel_vel_abs_mean": vmc_wheel_vel.abs().mean(),
             "wheel_vel_abs_max": vmc_wheel_vel.abs().max(),
-            "wheel_vel_ref_abs_mean": wheel_vel_ref.abs().mean(),
-            "wheel_vel_ref_abs_max": wheel_vel_ref.abs().max(),
-            "wheel_vel_error_abs_mean": wheel_vel_error.abs().mean(),
-            "wheel_vel_error_abs_max": wheel_vel_error.abs().max(),
+            "wheel_torque_cmd_abs_mean": wheel_torque_cmd.abs().mean(),
+            "wheel_torque_cmd_abs_max": wheel_torque_cmd.abs().max(),
+            "wheel_torque_error_abs_mean": wheel_torque_error.abs().mean(),
+            "wheel_torque_error_abs_max": wheel_torque_error.abs().max(),
             "wheel_joint_vel_limit_mean": wheel_joint_vel_limit.mean(dim=0),
-            "wheel_ground_speed_ref_abs_mean": wheel_vel_ref.abs().mean() * wheel_speed_radius,
-            "wheel_ground_speed_ref_abs_max": wheel_vel_ref.abs().max() * wheel_speed_radius,
             "wheel_ground_speed_abs_mean": vmc_wheel_vel.abs().mean() * wheel_speed_radius,
             "wheel_ground_speed_abs_max": vmc_wheel_vel.abs().max() * wheel_speed_radius,
             "left_action_env0": left_action[0],
@@ -332,22 +328,16 @@ class WlSequenceRunner:
             "tp_cmd_mean": tp_cmd.mean(dim=0),
             "delta_force_cmd_mean": delta_force_cmd.mean(dim=0),
             "total_force_cmd_mean": total_force_cmd.mean(dim=0),
-            "wheel_vel_ref_mean": wheel_vel_ref.abs().mean(dim=0),
+            "wheel_torque_cmd_mean": wheel_torque_cmd.abs().mean(dim=0),
             "theta0_env0": vmc_state["theta0"][0],
             "L0_env0": vmc_state["L0"][0],
             "tp_cmd_env0": tp_cmd[0],
             "delta_force_cmd_env0": delta_force_cmd[0],
             "total_force_cmd_env0": total_force_cmd[0],
             "joint_wheel_vel_env0": wheel_vel[0],
-            "wheel_vel_ref_env0": wheel_vel_ref[0],
+            "wheel_torque_cmd_env0": wheel_torque_cmd[0],
             "wheel_radius": torch.tensor(wheel_speed_radius, device=actions.device),
-            "action_scale_vel": torch.tensor(float(vmc_cfg.action_scale_vel), device=actions.device),
-            "max_wheel_ground_speed_from_action": torch.tensor(
-                float(vmc_cfg.action_scale_vel) * wheel_speed_radius, device=actions.device
-            ),
-            "max_wheel_ground_speed_from_clip": torch.tensor(
-                float(vmc_cfg.action_scale_vel) * wheel_speed_radius * clip_wheel_actions, device=actions.device
-            ),
+            "action_scale_wheel_torque": torch.tensor(float(vmc_cfg.action_scale_wheel_torque), device=actions.device),
         }
 
     def _reward_debug_stats(self) -> dict[str, float]:
@@ -440,19 +430,15 @@ class WlSequenceRunner:
             },
             "wheels": {
                 "radius_m": self._as_float(leg_stats["wheel_radius"]),
-                "action_scale_vel_rad_s": self._as_float(leg_stats["action_scale_vel"]),
-                "max_ground_speed_from_action_m_s": self._as_float(leg_stats["max_wheel_ground_speed_from_action"]),
-                "max_ground_speed_from_clip_m_s": self._as_float(leg_stats["max_wheel_ground_speed_from_clip"]),
+                "action_scale_wheel_torque_nm": self._as_float(leg_stats["action_scale_wheel_torque"]),
                 "vel_abs_mean_rad_s": self._as_float(leg_stats["wheel_vel_abs_mean"]),
                 "vel_abs_max_rad_s": self._as_float(leg_stats["wheel_vel_abs_max"]),
-                "vel_ref_abs_mean_rad_s": self._as_float(leg_stats["wheel_vel_ref_abs_mean"]),
-                "vel_ref_abs_max_rad_s": self._as_float(leg_stats["wheel_vel_ref_abs_max"]),
-                "vel_error_abs_mean_rad_s": self._as_float(leg_stats["wheel_vel_error_abs_mean"]),
-                "vel_error_abs_max_rad_s": self._as_float(leg_stats["wheel_vel_error_abs_max"]),
+                "torque_cmd_abs_mean_nm": self._as_float(leg_stats["wheel_torque_cmd_abs_mean"]),
+                "torque_cmd_abs_max_nm": self._as_float(leg_stats["wheel_torque_cmd_abs_max"]),
+                "torque_error_abs_mean_nm": self._as_float(leg_stats["wheel_torque_error_abs_mean"]),
+                "torque_error_abs_max_nm": self._as_float(leg_stats["wheel_torque_error_abs_max"]),
                 "ground_speed_abs_mean_m_s": self._as_float(leg_stats["wheel_ground_speed_abs_mean"]),
                 "ground_speed_abs_max_m_s": self._as_float(leg_stats["wheel_ground_speed_abs_max"]),
-                "ground_speed_ref_abs_mean_m_s": self._as_float(leg_stats["wheel_ground_speed_ref_abs_mean"]),
-                "ground_speed_ref_abs_max_m_s": self._as_float(leg_stats["wheel_ground_speed_ref_abs_max"]),
                 "torque_abs_mean_nm": self._as_float(leg_stats["wheel_torque_abs_mean"]),
                 "torque_abs_max_nm": self._as_float(leg_stats["wheel_torque_abs_max"]),
                 "torque_sat_frac_0p95": self._as_float(leg_stats["wheel_torque_sat_frac_0p95"]),
@@ -478,7 +464,7 @@ class WlSequenceRunner:
                 "left_action": self._as_list(leg_stats["left_action_env0"]),
                 "right_action": self._as_list(leg_stats["right_action_env0"]),
                 "wheel_vel": self._as_list(leg_stats["wheel_vel_env0"]),
-                "wheel_vel_ref": self._as_list(leg_stats["wheel_vel_ref_env0"]),
+                "wheel_torque_cmd": self._as_list(leg_stats["wheel_torque_cmd_env0"]),
                 "wheel_torque": self._as_list(leg_stats["wheel_torque_env0"]),
                 "theta0": self._as_list(leg_stats["theta0_env0"]),
                 "L0": self._as_list(leg_stats["L0_env0"]),
@@ -530,14 +516,12 @@ class WlSequenceRunner:
             "Diagnostics/command_ang_z_range_max": leg_stats["command_ang_z_range"][1],
             "Diagnostics/wheel_vel_abs_mean_rad_s": leg_stats["wheel_vel_abs_mean"],
             "Diagnostics/wheel_vel_abs_max_rad_s": leg_stats["wheel_vel_abs_max"],
-            "Diagnostics/wheel_vel_ref_abs_mean_rad_s": leg_stats["wheel_vel_ref_abs_mean"],
-            "Diagnostics/wheel_vel_ref_abs_max_rad_s": leg_stats["wheel_vel_ref_abs_max"],
-            "Diagnostics/wheel_vel_error_abs_mean_rad_s": leg_stats["wheel_vel_error_abs_mean"],
-            "Diagnostics/wheel_vel_error_abs_max_rad_s": leg_stats["wheel_vel_error_abs_max"],
             "Diagnostics/wheel_ground_speed_abs_mean_m_s": leg_stats["wheel_ground_speed_abs_mean"],
             "Diagnostics/wheel_ground_speed_abs_max_m_s": leg_stats["wheel_ground_speed_abs_max"],
-            "Diagnostics/wheel_ground_speed_ref_abs_mean_m_s": leg_stats["wheel_ground_speed_ref_abs_mean"],
-            "Diagnostics/wheel_ground_speed_ref_abs_max_m_s": leg_stats["wheel_ground_speed_ref_abs_max"],
+            "Diagnostics/wheel_torque_cmd_abs_mean_nm": leg_stats["wheel_torque_cmd_abs_mean"],
+            "Diagnostics/wheel_torque_cmd_abs_max_nm": leg_stats["wheel_torque_cmd_abs_max"],
+            "Diagnostics/wheel_torque_error_abs_mean_nm": leg_stats["wheel_torque_error_abs_mean"],
+            "Diagnostics/wheel_torque_error_abs_max_nm": leg_stats["wheel_torque_error_abs_max"],
             "Diagnostics/wheel_torque_abs_mean_nm": leg_stats["wheel_torque_abs_mean"],
             "Diagnostics/wheel_torque_abs_max_nm": leg_stats["wheel_torque_abs_max"],
             "Diagnostics/wheel_torque_sat_frac_0p95": leg_stats["wheel_torque_sat_frac_0p95"],
@@ -549,9 +533,7 @@ class WlSequenceRunner:
             "Diagnostics/tp_cmd_abs_mean_nm": leg_stats["tp_cmd_mean"].abs().mean(),
             "Diagnostics/delta_force_cmd_abs_mean_n": leg_stats["delta_force_cmd_mean"].abs().mean(),
             "Diagnostics/total_force_cmd_mean_n": leg_stats["total_force_cmd_mean"].mean(),
-            "Diagnostics/action_scale_vel_rad_s": leg_stats["action_scale_vel"],
-            "Diagnostics/max_wheel_ground_speed_from_action_m_s": leg_stats["max_wheel_ground_speed_from_action"],
-            "Diagnostics/max_wheel_ground_speed_from_clip_m_s": leg_stats["max_wheel_ground_speed_from_clip"],
+            "Diagnostics/action_scale_wheel_torque_nm": leg_stats["action_scale_wheel_torque"],
         }
         for name, value in scalars.items():
             self.writer.add_scalar(name, self._as_float(value), it)
@@ -704,7 +686,7 @@ class WlSequenceRunner:
         print(f"{'Env0 wheel torque [L, R]:':>34} {self._format_tensor(leg_stats['wheel_torque_env0'])}")
         print(f"{'Wheel vel |mean abs| [L, R]:':>34} {self._format_tensor(leg_stats['wheel_vel_mean_abs'])}")
         print(f"{'Env0 wheel vel [L, R]:':>34} {self._format_tensor(leg_stats['wheel_vel_env0'])}")
-        print(f"{'Env0 wheel vel ref [L, R]:':>34} {self._format_tensor(leg_stats['wheel_vel_ref_env0'])}")
+        print(f"{'Env0 wheel torque cmd [L, R]:':>34} {self._format_tensor(leg_stats['wheel_torque_cmd_env0'])}")
         print(f"{'theta0 |mean| [L, R]:':>34} {self._format_tensor(leg_stats['theta0_mean'])}")
         print(f"{'L0 |mean| [L, R]:':>34} {self._format_tensor(leg_stats['L0_mean'])}")
         print(f"{'Tp cmd |mean| [L, R] Nm:':>34} {self._format_tensor(leg_stats['tp_cmd_mean'])}")

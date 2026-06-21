@@ -224,8 +224,7 @@ def main() -> None:
     env_cfg.actions.vmc.feedforward_force = 0.0
     env_cfg.actions.vmc.action_scale_tp = 0.0
     env_cfg.actions.vmc.action_scale_force = 0.0
-    env_cfg.actions.vmc.action_scale_vel = 0.0
-    env_cfg.actions.vmc.wheel_damping = 0.0
+    env_cfg.actions.vmc.action_scale_wheel_torque = 0.0
     env_cfg.actions.vmc.randomize_action_delay = False
     env_cfg.actions.vmc.action_delay_ms_range = (0.0, 0.0)
 

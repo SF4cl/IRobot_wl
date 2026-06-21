@@ -276,3 +276,5 @@ find logs/rsl_rl/wl_vmc_flat -maxdepth 2 -type f | grep 'model_.*\.pt' | sort
 
 
 python scripts\rsl_rl\train.py --task IRobot-WL-Velocity-VMC-Flat-v0 --agent rsl_rl_cfg_entry_point --num_envs 512 --max_iterations 200 --headless
+
+scp -r -P 37023 root@connect.westc.seetacloud.com:/root/autodl-tmp/wl_workspace/IRobot_wl/logs/rsl_rl/wl_vmc_flat/2026-06-21_12-54-05 D:\rm\2026_code\rl\IRobot_wl\logs\rsl_rl\wl_vmc_flat

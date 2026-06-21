@@ -38,7 +38,7 @@ parser.add_argument("--left_wheel_action", type=float, default=0.5, help="Raw ac
 parser.add_argument("--right_wheel_action", type=float, default=0.5, help="Raw action for right wheel.")
 parser.add_argument("--tp_action", type=float, default=0.0, help="Raw action for both leg swing torques.")
 parser.add_argument("--force_action", type=float, default=0.0, help="Raw action for both residual axial leg forces.")
-parser.add_argument("--wheel_damping", type=float, default=None, help="Temporarily override VMC wheel damping.")
+parser.add_argument("--action_scale_wheel_torque", type=float, default=None, help="Temporarily override VMC action_scale_wheel_torque.")
 parser.add_argument("--wheel_torque_limit", type=float, default=None, help="Temporarily override both VMC wheel torque limits.")
 parser.add_argument("--sim_dt", type=float, default=None, help="Temporarily override physics simulation dt.")
 parser.add_argument("--decimation", type=int, default=None, help="Temporarily override action decimation.")
@@ -219,7 +219,7 @@ def _print_wheel_state(env, action: torch.Tensor, step: int, phase: str) -> None
         raise RuntimeError(f"Unexpected wheel parent body order: {parent_body_names}")
 
     wheel_action = torch.stack([action[:, 2], action[:, 5]], dim=1)
-    wheel_vel_ref = wheel_action * cfg.action_scale_vel
+    wheel_torque_cmd = wheel_action * cfg.action_scale_wheel_torque
     joint_pos = robot.data.joint_pos[:, wheel_joint_ids]
     joint_vel = robot.data.joint_vel[:, wheel_joint_ids]
     vmc_joint_pos = joint_pos
@@ -227,7 +227,7 @@ def _print_wheel_state(env, action: torch.Tensor, step: int, phase: str) -> None
     effort_target = robot.data.joint_effort_target[:, wheel_joint_ids]
     computed_torque = robot.data.computed_torque[:, wheel_joint_ids]
     applied_torque = robot.data.applied_torque[:, wheel_joint_ids]
-    vmc_raw_torque = cfg.wheel_damping * (wheel_vel_ref - vmc_joint_vel)
+    vmc_raw_torque = wheel_torque_cmd
     configured_torque_limits = torch.as_tensor(cfg.torque_limits, device=joint_vel.device, dtype=joint_vel.dtype)
     vmc_clipped_torque = torch.clamp(
         vmc_raw_torque,
@@ -258,8 +258,7 @@ def _print_wheel_state(env, action: torch.Tensor, step: int, phase: str) -> None
         feedforward_force=cfg.feedforward_force,
         action_scale_tp=cfg.action_scale_tp,
         action_scale_force=cfg.action_scale_force,
-        action_scale_vel=cfg.action_scale_vel,
-        wheel_damping=cfg.wheel_damping,
+        action_scale_wheel_torque=cfg.action_scale_wheel_torque,
         torque_limits=configured_torque_limits,
     )
     expected_wheel_torque = expected_full_torque[:, wheel_joint_ids]
@@ -321,7 +320,7 @@ def _print_wheel_state(env, action: torch.Tensor, step: int, phase: str) -> None
         print(f"action term raw [L, R]:        {_fmt(torch.stack([action_term_raw[:, 2], action_term_raw[:, 5]], dim=1)[0])}")
     if action_term_delayed is not None:
         print(f"action term delayed [L, R]:    {_fmt(torch.stack([action_term_delayed[:, 2], action_term_delayed[:, 5]], dim=1)[0])}")
-    print(f"wheel vel ref [rad/s] [L, R]:  {_fmt(wheel_vel_ref[0])}")
+    print(f"wheel torque cmd [Nm] [L, R]:  {_fmt(wheel_torque_cmd[0])}")
     print(f"joint pos [rad] [L, R]:        {_fmt(joint_pos[0])}")
     print(f"VMC pos [rad] [L, R]:          {_fmt(vmc_joint_pos[0])}")
     print(f"joint vel [rad/s] [L, R]:      {_fmt(joint_vel[0])}")
@@ -383,8 +382,8 @@ def main() -> None:
         env_cfg.actions.vmc.kd_l0 = 0.0
         env_cfg.actions.vmc.randomize_action_delay = False
         env_cfg.actions.vmc.action_delay_ms_range = (0.0, 0.0)
-    if args_cli.wheel_damping is not None:
-        env_cfg.actions.vmc.wheel_damping = args_cli.wheel_damping
+    if args_cli.action_scale_wheel_torque is not None:
+        env_cfg.actions.vmc.action_scale_wheel_torque = args_cli.action_scale_wheel_torque
     if args_cli.wheel_torque_limit is not None:
         torque_limits = list(env_cfg.actions.vmc.torque_limits)
         wheel_joint_ids = [4, 5]

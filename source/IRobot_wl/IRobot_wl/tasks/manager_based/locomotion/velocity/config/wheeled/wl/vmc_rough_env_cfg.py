@@ -92,16 +92,13 @@ class WLVMCVanillaActionsCfg:
     # Action scales
     action_scale_tp: float = 15.0
     action_scale_force: float = 40.0
-    action_scale_vel: float = 12.0
-
-    # Wheel control
-    wheel_damping: float = 0.08  # damping for wheel velocity PD [Nm*s/rad]
+    action_scale_wheel_torque: float = 4.0  # direct wheel torque scale [Nm]
 
     # Action clipping
     clip_actions: float = 100.0
     clip_tp_actions: float = 1.0
     clip_force_actions: float = 1.0
-    clip_wheel_actions: float = 1.3262599469496021
+    clip_wheel_actions: float = 1.0  # ±1 → ±4 Nm
 
 
 # ============================================================================ #
@@ -115,11 +112,11 @@ class WLVMCVanillaObservationsCfg:
 
     In VMC mode, we observe:
       - Task-space state: theta0, L0, theta0_dot, L0_dot (2 legs x 4 = 8 dims)
-      - Wheel state: wheel_pos, wheel_vel (2 wheels x 2 = 4 dims)
+      - Wheel state: wheel_vel (2 wheels x 1 = 2 dims)
       - Base state: ang_vel (3), projected_gravity (3)
       - Commands (3)
       - Previous actions (6)
-      Total: 8 + 4 + 3 + 3 + 3 + 6 = 27 dims
+      Total: 8 + 2 + 3 + 3 + 3 + 6 = 25 dims
     """
 
     # Base observations
@@ -133,7 +130,6 @@ class WLVMCVanillaObservationsCfg:
     leg_length_dot = True  # L0_dot, 2
 
     # Wheel observations
-    wheel_pos = True  # 2
     wheel_vel = True  # 2
 
     # Commands
@@ -167,12 +163,11 @@ class WLVMCControlActionsCfg:
         feedforward_force=40.0,
         action_scale_tp=15.0,
         action_scale_force=40.0,
-        action_scale_vel=12.0,
-        wheel_damping=0.08,
+        action_scale_wheel_torque=4.0,
         clip_actions=100.0,
         clip_tp_actions=1.0,
         clip_force_actions=1.0,
-        clip_wheel_actions=1.3262599469496021,
+        clip_wheel_actions=1.0,
         # Full articulation joint order is [lf0, rf0, lf1, rf1, l_wheel, r_wheel].
         torque_limits=[30.0, 30.0, 30.0, 30.0, 4.0, 4.0],
         randomize_action_delay=True,
@@ -266,13 +261,6 @@ class WLVMCObsCfg(ObservationsCfg):
             clip=(-100.0, 100.0),
             scale=0.25,
         )
-        wheel_pos = ObsTerm(
-            func=mdp.wheel_joint_pos,
-            params={"asset_cfg": SceneEntityCfg("robot", joint_names=["l_wheel_Joint", "r_wheel_Joint"])},
-            noise=Unoise(n_min=-0.01, n_max=0.01),
-            clip=(-100.0, 100.0),
-            scale=1.0,
-        )
         wheel_vel = ObsTerm(
             func=mdp.wheel_joint_vel,
             params={"asset_cfg": SceneEntityCfg("robot", joint_names=["l_wheel_Joint", "r_wheel_Joint"])},
@@ -361,12 +349,6 @@ class WLVMCObsCfg(ObservationsCfg):
             },
             clip=(-100.0, 100.0),
             scale=0.25,
-        )
-        wheel_pos = ObsTerm(
-            func=mdp.wheel_joint_pos,
-            params={"asset_cfg": SceneEntityCfg("robot", joint_names=["l_wheel_Joint", "r_wheel_Joint"])},
-            clip=(-100.0, 100.0),
-            scale=1.0,
         )
         wheel_vel = ObsTerm(
             func=mdp.wheel_joint_vel,
@@ -613,8 +595,7 @@ class WLVMCVanillaRoughEnvCfg(LocomotionVelocityRoughEnvCfg):
         self.actions.vmc.feedforward_force = self.vmc_actions.feedforward_force
         self.actions.vmc.action_scale_tp = self.vmc_actions.action_scale_tp
         self.actions.vmc.action_scale_force = self.vmc_actions.action_scale_force
-        self.actions.vmc.action_scale_vel = self.vmc_actions.action_scale_vel
-        self.actions.vmc.wheel_damping = self.vmc_actions.wheel_damping
+        self.actions.vmc.action_scale_wheel_torque = self.vmc_actions.action_scale_wheel_torque
         self.actions.vmc.clip_actions = self.vmc_actions.clip_actions
         self.actions.vmc.clip_tp_actions = self.vmc_actions.clip_tp_actions
         self.actions.vmc.clip_force_actions = self.vmc_actions.clip_force_actions
@@ -797,7 +778,6 @@ def compute_vmc_torques_from_actions(env, actions: torch.Tensor) -> torch.Tensor
         feedforward_force=vmc_cfg.feedforward_force,
         action_scale_tp=vmc_cfg.action_scale_tp,
         action_scale_force=vmc_cfg.action_scale_force,
-        action_scale_vel=vmc_cfg.action_scale_vel,
-        wheel_damping=vmc_cfg.wheel_damping,
+        action_scale_wheel_torque=vmc_cfg.action_scale_wheel_torque,
         torque_limits=robot.data.torque_limit,
     )
