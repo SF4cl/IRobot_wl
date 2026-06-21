@@ -488,8 +488,8 @@ class WLVMCVanillaRewardsCfg(RewardsCfg):
     """Reward terms for the VMC MDP, matching WL-Gym's reward structure."""
 
     # VMC-specific rewards (added to base)
-    nominal_state = RewTerm(
-        func=mdp.nominal_state,
+    theta0_nominal = RewTerm(
+        func=mdp.theta0_nominal,
         weight=-0.3,
         params={
             "asset_cfg": SceneEntityCfg("robot"),
@@ -649,7 +649,7 @@ class WLVMCVanillaRoughEnvCfg(LocomotionVelocityRoughEnvCfg):
         self.rewards.base_height_l2.params["asset_cfg"].body_names = [self.base_link_name]
         self.rewards.base_height_enhance.weight = 1.0
         self.rewards.base_height_enhance.params["target_height"] = 0.23
-        self.rewards.nominal_state.weight = -0.3
+        self.rewards.theta0_nominal.weight = -0.3
         self.rewards.body_lin_acc_l2.weight = 0
 
         # Joint penalties (legs only for VMC)
@@ -672,9 +672,8 @@ class WLVMCVanillaRoughEnvCfg(LocomotionVelocityRoughEnvCfg):
         self.rewards.joint_power.params["asset_cfg"].joint_names = self.leg_joint_names
         self.rewards.stand_still.weight = -2.0
         self.rewards.stand_still.params["asset_cfg"].joint_names = self.leg_joint_names
-        self.rewards.joint_pos_penalty.weight = -0.5
-        self.rewards.joint_pos_penalty.params["asset_cfg"].joint_names = self.leg_joint_names
-        self.rewards.joint_pos_penalty.params["velocity_threshold"] = 100
+        self.rewards.theta0_nominal.weight = -0.5
+        self.rewards.theta0_nominal.params["leg_joint_names"] = self.leg_joint_names
         self.rewards.wheel_vel_penalty.weight = -0.01
         self.rewards.wheel_vel_penalty.params["sensor_cfg"].body_names = [self.foot_link_name]
         self.rewards.wheel_vel_penalty.params["asset_cfg"].joint_names = self.wheel_joint_names
@@ -683,7 +682,7 @@ class WLVMCVanillaRoughEnvCfg(LocomotionVelocityRoughEnvCfg):
             ["rf0_Joint", "lf0_Joint"],
             ["rf1_Joint", "lf1_Joint"],
         ]
-        self.rewards.nominal_state.weight = -0.3
+        self.rewards.leg_angle_symmetry.weight = -1.3
         self.rewards.leg_length_symmetry.weight = -4.0
         self.rewards.vmc_action_symmetry.weight = -0.25
 

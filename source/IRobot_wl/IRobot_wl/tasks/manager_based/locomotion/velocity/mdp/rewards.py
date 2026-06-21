@@ -852,6 +852,52 @@ def leg_angle_symmetry(
     return reward
 
 
+def theta0_nominal(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    leg_joint_names: list[str] | None = None,
+    l1: float = 0.21665632675675972,
+    l2: float = 0.2540023491164531,
+    offset: float = -0.007712217793726145,
+    theta1_offset: float = 0.14299916248023697,
+    theta2_offset: float = 2.406020345452543,
+) -> torch.Tensor:
+    """Penalize leg-angle deviation from vertical (θ0 ≈ 0) in task space.
+
+    Unlike ``joint_pos_penalty`` which works in joint space and implicitly
+    couples θ0 with L0, this reward only constrains the leg direction — the
+    policy remains free to choose knee configuration for the desired leg length.
+
+    Args:
+        env: The RL environment.
+        asset_cfg: The asset configuration.
+        leg_joint_names: Leg joint names [hip_l, knee_l, hip_r, knee_r].
+        l1: Thigh link length [m].
+        l2: Calf link length [m].
+        offset: Hip offset from body center [m].
+        theta1_offset: Hip zero-angle offset [rad].
+        theta2_offset: Knee-to-wheel zero-angle offset [rad].
+
+    Returns:
+        Penalty value, shape (num_envs,). 0 when both legs point straight down.
+    """
+    from IRobot_wl.tasks.manager_based.locomotion.velocity.mdp.vmc import forward_kinematics
+
+    asset: Articulation = env.scene[asset_cfg.name]
+    if leg_joint_names is None:
+        return torch.zeros(env.num_envs, device=env.device)
+
+    joint_indices = asset.find_joints(leg_joint_names)[0]
+    dof_pos = asset.data.joint_pos[:, joint_indices]
+    theta1 = torch.stack([dof_pos[:, 0] + theta1_offset, -dof_pos[:, 2] + theta1_offset], dim=1)
+    theta2 = torch.stack([dof_pos[:, 1] + theta2_offset, -dof_pos[:, 3] + theta2_offset], dim=1)
+    _, theta0 = forward_kinematics(theta1, theta2, l1, l2, offset)
+
+    reward = torch.sum(torch.square(theta0), dim=1)
+    reward *= torch.clamp(-env.scene["robot"].data.projected_gravity_b[:, 2], 0, 0.7) / 0.7
+    return reward
+
+
 def vmc_action_symmetry(
     env: ManagerBasedRLEnv,
     action_name: str = "vmc",

@@ -50,11 +50,10 @@ class WLVMCVanillaFlatEnvCfg(WLVMCVanillaRoughEnvCfg):
 
         self.rewards.vmc_action_symmetry.weight = -0.15
         self.rewards.vmc_action_symmetry.params["wheel_scale"] = 0.0
-        self.rewards.nominal_state.weight = -0.05
+        self.rewards.theta0_nominal.weight = -0.1
         self.rewards.leg_length_symmetry.weight = -1.0
-        self.rewards.leg_angle_symmetry.weight = -1.5
+        self.rewards.leg_angle_symmetry.weight = -1.55
         self.rewards.action_rate_l2.weight = -0.005
-        self.rewards.joint_pos_penalty.weight = -0.1
         self.rewards.stand_still.weight = -0.5
         self.rewards.stand_still.params["lin_x_threshold"] = 0.05
         self.rewards.stand_still.params["ang_z_threshold"] = 0.05

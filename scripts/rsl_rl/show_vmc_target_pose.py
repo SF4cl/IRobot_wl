@@ -10,15 +10,27 @@ measured VMC state.
 
 Example:
 
-    python scripts/rsl_rl/show_vmc_target_pose.py --show --theta0 0.0 --l0 0.17
+    python scripts/rsl_rl/show_vmc_target_pose.py --show --theta0 0.0 --l0 0.17 --base_height 0.45
 """
 
 """Launch Isaac Sim Simulator first."""
 
 import argparse
+import os
 from pathlib import Path
 import sys
 import xml.etree.ElementTree as ET
+
+# Ensure h5py's bundled HDF5 DLLs are loaded before Isaac Sim's conflicting copies.
+# Isaac Sim ships its own hdf5.dll (for rt sensors) that gets loaded first
+# via Kit's DLL search path. Once loaded, Windows won't load another copy from a
+# different path, and h5py's .pyd files fail because the exports don't match.
+import ctypes
+_h5py_dll_dir = os.path.join(sys.prefix, "Lib", "site-packages", "h5py")
+if os.path.isdir(_h5py_dll_dir):
+    os.add_dll_directory(_h5py_dll_dir)
+    ctypes.CDLL(os.path.join(_h5py_dll_dir, "hdf5.dll"))
+    ctypes.CDLL(os.path.join(_h5py_dll_dir, "hdf5_hl.dll"))
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 LOCAL_SOURCE_DIR = REPO_ROOT / "source" / "IRobot_wl"
@@ -32,7 +44,7 @@ parser = argparse.ArgumentParser(description="Show the WL pose for a target VMC 
 parser.add_argument("--task", type=str, default="IRobot-WL-Velocity-VMC-Flat-v0")
 parser.add_argument("--theta0", type=float, default=0.0, help="Target virtual leg angle [rad].")
 parser.add_argument("--l0", type=float, default=0.17, help="Target virtual leg length [m].")
-parser.add_argument("--height", type=float, default=0.45, help="Fixed base height [m].")
+parser.add_argument("--base_height", type=float, default=0.45, help="Fixed base height [m].")
 parser.add_argument("--steps", type=int, default=100000, help="Number of render/sim steps to hold the pose.")
 parser.add_argument("--print_every", type=int, default=120, help="Print state every N steps.")
 parser.add_argument("--num_envs", type=int, default=1)
@@ -138,7 +150,7 @@ def _make_target_joint_state(env) -> tuple[torch.Tensor, torch.Tensor, torch.Ten
 def _write_fixed_pose(env, joint_pos: torch.Tensor, joint_vel: torch.Tensor) -> None:
     robot = env.unwrapped.scene["robot"]
     root_pose = robot.data.root_pose_w.clone()
-    root_pose[:, 2] = args_cli.height
+    root_pose[:, 2] = args_cli.base_height
     # identity orientation in Isaac Lab quaternion order [w, x, y, z]
     root_pose[:, 3] = 1.0
     root_pose[:, 4:] = 0.0
@@ -178,7 +190,7 @@ def _print_state(env, target_theta1: torch.Tensor, target_theta2: torch.Tensor, 
 
     print("\n" + "=" * 78)
     print(f"VMC target pose at step {step}")
-    print(f"target theta0={args_cli.theta0:.6f}, target L0={args_cli.l0:.6f}, fixed base z={args_cli.height:.3f}")
+    print(f"target theta0={args_cli.theta0:.6f}, target L0={args_cli.l0:.6f}, fixed base z={args_cli.base_height:.3f}")
     print(f"target theta1 mirrored [L, R]: {_fmt(target_theta1[0])}")
     print(f"target theta2 mirrored [L, R]: {_fmt(target_theta2[0])}")
     print(f"physical joint pos {LEG_JOINT_NAMES}: {_fmt(robot.data.joint_pos[0, leg_joint_ids])}")
@@ -208,7 +220,7 @@ def main() -> None:
         env_cfg.commands.base_velocity.debug_vis = False
     env_cfg.scene.robot.spawn.fix_base = True
     env_cfg.scene.robot.spawn.rigid_props.disable_gravity = True
-    env_cfg.scene.robot.init_state.pos = (0.0, 0.0, args_cli.height)
+    env_cfg.scene.robot.init_state.pos = (0.0, 0.0, args_cli.base_height)
     env_cfg.actions.vmc.feedforward_force = 0.0
     env_cfg.actions.vmc.action_scale_tp = 0.0
     env_cfg.actions.vmc.action_scale_force = 0.0
