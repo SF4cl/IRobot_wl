@@ -1498,6 +1498,18 @@ def recovery_stand_upright_factor(
     return torch.clamp((fallen_threshold - proj_z) / (fallen_threshold - upright_threshold), min=0.0, max=1.0)
 
 
+def _recovery_stand_time_gate(
+    env: ManagerBasedRLEnv,
+    start_time_s: float,
+    ramp_time_s: float,
+) -> torch.Tensor:
+    """Smoothly enable late-stage penalties after the policy has had time to act."""
+    elapsed_time = env.episode_length_buf.to(dtype=torch.float32) * env.step_dt
+    if ramp_time_s <= 0.0:
+        return (elapsed_time >= start_time_s).float()
+    return torch.clamp((elapsed_time - start_time_s) / ramp_time_s, min=0.0, max=1.0)
+
+
 def _recovery_stand_leg_state(
     env: ManagerBasedRLEnv,
     leg_joint_names: list[str] | None,
@@ -1818,6 +1830,64 @@ def recovery_stand_wheel_load(
 
     phase = recovery_stand_upright_factor(env, upright_threshold, fallen_threshold, asset_cfg)
     return phase * (0.6 * total_load_score + 0.4 * each_load_score)
+
+
+def recovery_stand_late_not_upright(
+    env: ManagerBasedRLEnv,
+    start_time_s: float = 4.0,
+    ramp_time_s: float = 1.5,
+    upright_threshold: float = -0.85,
+    fallen_threshold: float = -0.35,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Penalize episodes that have not self-righted after the early recovery window."""
+    time_gate = _recovery_stand_time_gate(env, start_time_s, ramp_time_s)
+    upright = recovery_stand_upright_factor(env, upright_threshold, fallen_threshold, asset_cfg)
+    return time_gate * torch.square(1.0 - upright)
+
+
+def recovery_stand_late_low_base(
+    env: ManagerBasedRLEnv,
+    min_height: float = 0.17,
+    height_std: float = 0.04,
+    start_time_s: float = 7.0,
+    ramp_time_s: float = 2.0,
+    upright_threshold: float = -0.85,
+    fallen_threshold: float = -0.35,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Penalize staying in a low crouch after the body is already mostly upright."""
+    asset: RigidObject = env.scene[asset_cfg.name]
+    time_gate = _recovery_stand_time_gate(env, start_time_s, ramp_time_s)
+    upright = recovery_stand_upright_factor(env, upright_threshold, fallen_threshold, asset_cfg)
+    height_deficit = torch.clamp(min_height - asset.data.root_pos_w[:, 2], min=0.0)
+    return time_gate * upright * torch.square(height_deficit / height_std)
+
+
+def recovery_stand_late_no_wheel_load(
+    env: ManagerBasedRLEnv,
+    target_total_force_n: float = 100.0,
+    min_each_force_n: float = 25.0,
+    min_load_score: float = 0.65,
+    start_time_s: float = 7.0,
+    ramp_time_s: float = 2.0,
+    upright_threshold: float = -0.85,
+    fallen_threshold: float = -0.35,
+    sensor_cfg: SceneEntityCfg = SceneEntityCfg("contact_forces"),
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Penalize upright poses where the wheels are not carrying enough weight."""
+    load_score = recovery_stand_wheel_load(
+        env,
+        target_total_force_n=target_total_force_n,
+        min_each_force_n=min_each_force_n,
+        upright_threshold=upright_threshold,
+        fallen_threshold=fallen_threshold,
+        sensor_cfg=sensor_cfg,
+        asset_cfg=asset_cfg,
+    )
+    time_gate = _recovery_stand_time_gate(env, start_time_s, ramp_time_s)
+    return time_gate * torch.square(torch.clamp(min_load_score - load_score, min=0.0))
 
 
 def recovery_stand_success_bonus(

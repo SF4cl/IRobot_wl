@@ -50,7 +50,9 @@ class WLVMCRecoveryStandFlatEnvCfg(WLVMCRecoveryFlatEnvCfg):
         self._disable_all_rewards()
 
         # Recovery phase: keep the successful flip-up behavior.
-        self.rewards.alive = RewTerm(func=mdp.is_alive, weight=1.0)
+        # Keep a small alive bonus for numerical stability, but do not let the
+        # policy score well by simply surviving in a low-reward stuck pose.
+        self.rewards.alive = RewTerm(func=mdp.is_alive, weight=0.2)
         self.rewards.is_terminated = RewTerm(func=mdp.is_terminated, weight=-2.0)
         self.rewards.flat_orientation_l2 = RewTerm(
             func=mdp.self_right_orientation_l2,
@@ -181,6 +183,48 @@ class WLVMCRecoveryStandFlatEnvCfg(WLVMCRecoveryFlatEnvCfg):
                 "sensor_cfg": SceneEntityCfg(
                     "contact_forces",
                     body_names=["lf0_Link", "rf0_Link", "lf1_Link", "rf1_Link"],
+                ),
+                "asset_cfg": SceneEntityCfg("robot"),
+            },
+        )
+        self.rewards.recovery_stand_late_not_upright = RewTerm(
+            func=mdp.recovery_stand_late_not_upright,
+            weight=-2.0,
+            params={
+                "start_time_s": 4.0,
+                "ramp_time_s": 1.5,
+                "upright_threshold": -0.85,
+                "fallen_threshold": -0.35,
+                "asset_cfg": SceneEntityCfg("robot"),
+            },
+        )
+        self.rewards.recovery_stand_late_low_base = RewTerm(
+            func=mdp.recovery_stand_late_low_base,
+            weight=-2.5,
+            params={
+                "min_height": 0.17,
+                "height_std": 0.04,
+                "start_time_s": 7.0,
+                "ramp_time_s": 2.0,
+                "upright_threshold": -0.85,
+                "fallen_threshold": -0.35,
+                "asset_cfg": SceneEntityCfg("robot"),
+            },
+        )
+        self.rewards.recovery_stand_late_no_wheel_load = RewTerm(
+            func=mdp.recovery_stand_late_no_wheel_load,
+            weight=-2.0,
+            params={
+                "target_total_force_n": 100.0,
+                "min_each_force_n": 25.0,
+                "min_load_score": 0.65,
+                "start_time_s": 7.0,
+                "ramp_time_s": 2.0,
+                "upright_threshold": -0.85,
+                "fallen_threshold": -0.35,
+                "sensor_cfg": SceneEntityCfg(
+                    "contact_forces",
+                    body_names=["l_wheel_Link", "r_wheel_Link"],
                 ),
                 "asset_cfg": SceneEntityCfg("robot"),
             },
