@@ -30,7 +30,11 @@ class WLVMCRecoveryStandFlatEnvCfg(WLVMCRecoveryFlatEnvCfg):
         # Let the stand-up policy learn the full support force instead of
         # inheriting a standing-force bias from the recovery parent task.
         self.vmc_actions.feedforward_force = 0.0
+        self.vmc_actions.action_scale_force = 90.0
+        self.vmc_actions.clip_force_actions = 1.0
         self.actions.vmc.feedforward_force = self.vmc_actions.feedforward_force
+        self.actions.vmc.action_scale_force = self.vmc_actions.action_scale_force
+        self.actions.vmc.clip_force_actions = self.vmc_actions.clip_force_actions
 
         # Start with mostly fallen resets, but include some near-upright states
         # so the policy sees the stand-up phase frequently.
@@ -74,11 +78,13 @@ class WLVMCRecoveryStandFlatEnvCfg(WLVMCRecoveryFlatEnvCfg):
         # Stand-up phase: once the body is upright, stand in place with both
         # wheels on the ground. Keep this as continuous shaping rather than a
         # fine-grained hand-written state machine.
-        self.rewards.recovery_stand_wheel_contact = RewTerm(
-            func=mdp.recovery_stand_wheel_contact,
-            weight=4.0,
+        self.rewards.recovery_stand_wheel_contact = None
+        self.rewards.recovery_stand_wheel_load = RewTerm(
+            func=mdp.recovery_stand_wheel_load,
+            weight=5.0,
             params={
-                "threshold": 1.0,
+                "target_total_force_n": 100.0,
+                "min_each_force_n": 35.0,
                 "upright_threshold": -0.85,
                 "fallen_threshold": -0.35,
                 "sensor_cfg": SceneEntityCfg(
@@ -88,12 +94,12 @@ class WLVMCRecoveryStandFlatEnvCfg(WLVMCRecoveryFlatEnvCfg):
                 "asset_cfg": SceneEntityCfg("robot"),
             },
         )
-        self.rewards.recovery_stand_wheel_load = RewTerm(
-            func=mdp.recovery_stand_wheel_load,
-            weight=3.0,
+        self.rewards.recovery_stand_wheel_load_deficit = RewTerm(
+            func=mdp.recovery_stand_wheel_load_deficit,
+            weight=-6.0,
             params={
                 "target_total_force_n": 100.0,
-                "min_each_force_n": 25.0,
+                "min_each_force_n": 35.0,
                 "upright_threshold": -0.85,
                 "fallen_threshold": -0.35,
                 "sensor_cfg": SceneEntityCfg(
@@ -127,8 +133,19 @@ class WLVMCRecoveryStandFlatEnvCfg(WLVMCRecoveryFlatEnvCfg):
         )
         self.rewards.recovery_stand_theta0 = RewTerm(
             func=mdp.recovery_stand_theta0_l2,
-            weight=-10.0,
+            weight=-30.0,
             params={
+                "upright_threshold": -0.85,
+                "fallen_threshold": -0.35,
+                "leg_joint_names": self.leg_joint_names,
+                "asset_cfg": SceneEntityCfg("robot"),
+            },
+        )
+        self.rewards.recovery_stand_theta0_exp = RewTerm(
+            func=mdp.recovery_stand_theta0_exp,
+            weight=3.0,
+            params={
+                "std": 0.45,
                 "upright_threshold": -0.85,
                 "fallen_threshold": -0.35,
                 "leg_joint_names": self.leg_joint_names,
@@ -217,7 +234,7 @@ class WLVMCRecoveryStandFlatEnvCfg(WLVMCRecoveryFlatEnvCfg):
             weight=-2.0,
             params={
                 "target_total_force_n": 100.0,
-                "min_each_force_n": 25.0,
+                "min_each_force_n": 35.0,
                 "min_load_score": 0.65,
                 "start_time_s": 7.0,
                 "ramp_time_s": 2.0,
@@ -273,10 +290,10 @@ class WLVMCRecoveryStandFlatEnvCfg(WLVMCRecoveryFlatEnvCfg):
             params={
                 "max_time_s": 9.0,
                 "min_upright_factor": 0.75,
-                "min_height": 0.165,
+                "min_height": 0.18,
                 "target_total_force_n": 100.0,
-                "min_each_force_n": 25.0,
-                "min_load_score": 0.35,
+                "min_each_force_n": 35.0,
+                "min_load_score": 0.55,
                 "upright_threshold": -0.85,
                 "fallen_threshold": -0.35,
                 "sensor_cfg": SceneEntityCfg(

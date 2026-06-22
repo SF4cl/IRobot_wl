@@ -1756,6 +1756,28 @@ def recovery_stand_theta0_ready_exp(
     return phase * torch.exp(-theta0_error / (std**2))
 
 
+def recovery_stand_theta0_exp(
+    env: ManagerBasedRLEnv,
+    std: float = 0.45,
+    upright_threshold: float = -0.85,
+    fallen_threshold: float = -0.35,
+    leg_joint_names: list[str] | None = None,
+    l1: float = 0.21665632675675972,
+    l2: float = 0.2540023491164531,
+    offset: float = -0.007712217793726145,
+    theta1_offset: float = 0.14299916248023697,
+    theta2_offset: float = 2.406020345452543,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Reward placing both wheels near the body centerline after self-righting."""
+    _, theta0 = _recovery_stand_leg_state(
+        env, leg_joint_names, l1, l2, offset, theta1_offset, theta2_offset, asset_cfg
+    )
+    phase = recovery_stand_upright_factor(env, upright_threshold, fallen_threshold, asset_cfg)
+    theta0_error = torch.mean(torch.square(theta0), dim=1)
+    return phase * torch.exp(-theta0_error / (std**2))
+
+
 def recovery_stand_negative_force_l2(
     env: ManagerBasedRLEnv,
     action_name: str = "vmc",
@@ -1830,6 +1852,28 @@ def recovery_stand_wheel_load(
 
     phase = recovery_stand_upright_factor(env, upright_threshold, fallen_threshold, asset_cfg)
     return phase * (0.6 * total_load_score + 0.4 * each_load_score)
+
+
+def recovery_stand_wheel_load_deficit(
+    env: ManagerBasedRLEnv,
+    target_total_force_n: float = 100.0,
+    min_each_force_n: float = 35.0,
+    upright_threshold: float = -0.85,
+    fallen_threshold: float = -0.35,
+    sensor_cfg: SceneEntityCfg = SceneEntityCfg("contact_forces"),
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Penalize not carrying body weight on both wheels after self-righting."""
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    net_contact_forces = contact_sensor.data.net_forces_w_history
+    wheel_force_z = torch.max(torch.abs(net_contact_forces[:, :, sensor_cfg.body_ids, 2]), dim=1)[0]
+    total_load = torch.sum(wheel_force_z, dim=1)
+
+    total_deficit = torch.clamp((target_total_force_n - total_load) / target_total_force_n, min=0.0, max=1.0)
+    each_deficit = torch.mean(torch.clamp((min_each_force_n - wheel_force_z) / min_each_force_n, min=0.0, max=1.0), dim=1)
+
+    phase = recovery_stand_upright_factor(env, upright_threshold, fallen_threshold, asset_cfg)
+    return phase * (0.6 * torch.square(total_deficit) + 0.4 * torch.square(each_deficit))
 
 
 def recovery_stand_late_not_upright(
