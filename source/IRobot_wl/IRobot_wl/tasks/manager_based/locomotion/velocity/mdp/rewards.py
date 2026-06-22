@@ -1635,6 +1635,28 @@ def recovery_stand_leg_length_l2(
     return torch.mean(torch.square(leg_length - target), dim=1)
 
 
+def recovery_stand_leg_symmetry_l2(
+    env: ManagerBasedRLEnv,
+    upright_threshold: float = -0.75,
+    fallen_threshold: float = -0.25,
+    leg_joint_names: list[str] | None = None,
+    l1: float = 0.21665632675675972,
+    l2: float = 0.2540023491164531,
+    offset: float = -0.007712217793726145,
+    theta1_offset: float = 0.14299916248023697,
+    theta2_offset: float = 2.406020345452543,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Coordinate left/right leg length and swing angle after self-righting starts."""
+    leg_length, theta0 = _recovery_stand_leg_state(
+        env, leg_joint_names, l1, l2, offset, theta1_offset, theta2_offset, asset_cfg
+    )
+    phase = recovery_stand_upright_factor(env, upright_threshold, fallen_threshold, asset_cfg)
+    length_error = torch.square(leg_length[:, 0] - leg_length[:, 1])
+    theta_error = torch.square(theta0[:, 0] - theta0[:, 1])
+    return phase * (length_error + 0.25 * theta_error)
+
+
 def recovery_stand_theta0_l2(
     env: ManagerBasedRLEnv,
     upright_threshold: float = -0.85,
@@ -1654,6 +1676,50 @@ def recovery_stand_theta0_l2(
 
     phase = recovery_stand_upright_factor(env, upright_threshold, fallen_threshold, asset_cfg)
     return phase * torch.mean(torch.square(theta0), dim=1)
+
+
+def recovery_stand_theta0_worst_l2(
+    env: ManagerBasedRLEnv,
+    upright_threshold: float = -0.85,
+    fallen_threshold: float = -0.35,
+    leg_joint_names: list[str] | None = None,
+    l1: float = 0.21665632675675972,
+    l2: float = 0.2540023491164531,
+    offset: float = -0.007712217793726145,
+    theta1_offset: float = 0.14299916248023697,
+    theta2_offset: float = 2.406020345452543,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Penalize the worst leg swing angle after the body starts to recover."""
+    _, theta0 = _recovery_stand_leg_state(
+        env, leg_joint_names, l1, l2, offset, theta1_offset, theta2_offset, asset_cfg
+    )
+    phase = recovery_stand_upright_factor(env, upright_threshold, fallen_threshold, asset_cfg)
+    return phase * torch.max(torch.square(theta0), dim=1).values
+
+
+def recovery_stand_splayed_long_leg_l2(
+    env: ManagerBasedRLEnv,
+    theta0_threshold: float = 0.8,
+    leg_length_threshold: float = 0.18,
+    upright_threshold: float = -0.7,
+    fallen_threshold: float = -0.25,
+    leg_joint_names: list[str] | None = None,
+    l1: float = 0.21665632675675972,
+    l2: float = 0.2540023491164531,
+    offset: float = -0.007712217793726145,
+    theta1_offset: float = 0.14299916248023697,
+    theta2_offset: float = 2.406020345452543,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Discourage the stable failure mode with long legs splayed away from the body."""
+    leg_length, theta0 = _recovery_stand_leg_state(
+        env, leg_joint_names, l1, l2, offset, theta1_offset, theta2_offset, asset_cfg
+    )
+    phase = recovery_stand_upright_factor(env, upright_threshold, fallen_threshold, asset_cfg).unsqueeze(1)
+    theta_excess = torch.clamp(torch.abs(theta0) - theta0_threshold, min=0.0)
+    length_excess = torch.clamp(leg_length - leg_length_threshold, min=0.0)
+    return torch.sum(phase * torch.square(theta_excess) * torch.square(length_excess / 0.05), dim=1)
 
 
 def recovery_stand_theta0_ready_exp(
@@ -1710,6 +1776,48 @@ def recovery_stand_leg_ground_contact(
 
     phase = recovery_stand_upright_factor(env, upright_threshold, fallen_threshold, asset_cfg)
     return phase * contact_count
+
+
+def recovery_stand_wheel_contact(
+    env: ManagerBasedRLEnv,
+    threshold: float = 1.0,
+    upright_threshold: float = -0.85,
+    fallen_threshold: float = -0.35,
+    sensor_cfg: SceneEntityCfg = SceneEntityCfg("contact_forces"),
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Reward wheel-ground contact after self-righting."""
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    net_contact_forces = contact_sensor.data.net_forces_w_history
+    contact_force = torch.max(torch.norm(net_contact_forces[:, :, sensor_cfg.body_ids], dim=-1), dim=1)[0]
+    in_contact = contact_force > threshold
+    mean_contact = torch.mean(in_contact.float(), dim=1)
+    both_contact = torch.all(in_contact, dim=1).float()
+
+    phase = recovery_stand_upright_factor(env, upright_threshold, fallen_threshold, asset_cfg)
+    return phase * (0.5 * mean_contact + 0.5 * both_contact)
+
+
+def recovery_stand_wheel_load(
+    env: ManagerBasedRLEnv,
+    target_total_force_n: float = 100.0,
+    min_each_force_n: float = 25.0,
+    upright_threshold: float = -0.85,
+    fallen_threshold: float = -0.35,
+    sensor_cfg: SceneEntityCfg = SceneEntityCfg("contact_forces"),
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Reward the wheels carrying body weight after self-righting."""
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    net_contact_forces = contact_sensor.data.net_forces_w_history
+    wheel_force_z = torch.max(torch.abs(net_contact_forces[:, :, sensor_cfg.body_ids, 2]), dim=1)[0]
+    total_load = torch.sum(wheel_force_z, dim=1)
+
+    total_load_score = torch.clamp(total_load / target_total_force_n, min=0.0, max=1.0)
+    each_load_score = torch.mean(torch.clamp(wheel_force_z / min_each_force_n, min=0.0, max=1.0), dim=1)
+
+    phase = recovery_stand_upright_factor(env, upright_threshold, fallen_threshold, asset_cfg)
+    return phase * (0.6 * total_load_score + 0.4 * each_load_score)
 
 
 def recovery_stand_success_bonus(
