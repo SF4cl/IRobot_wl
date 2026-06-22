@@ -140,6 +140,13 @@ class WlSequenceRunner:
         base_lin_vel = self._robot.data.root_lin_vel_b
         base_ang_vel = self._robot.data.root_ang_vel_b
         commands = self.env.unwrapped.command_manager.get_command("base_velocity")
+        command_term = self.env.unwrapped.command_manager.get_term("base_velocity")
+        if hasattr(command_term, "base_height_command_b"):
+            base_height_cmd = command_term.base_height_command_b
+        else:
+            base_height_cmd = torch.full((self._robot.data.root_pos_w.shape[0],), 0.255, device=actions.device)
+        base_height = self._robot.data.root_pos_w[:, 2]
+        base_height_error = base_height - base_height_cmd
         command_ranges = self.env.unwrapped.command_manager.get_term("base_velocity").cfg.ranges
         projected_gravity = self._robot.data.projected_gravity_b
 
@@ -318,6 +325,11 @@ class WlSequenceRunner:
             "tilt_xy_abs_mean": projected_gravity[:, :2].norm(dim=1).mean(),
             "tilt_xy_abs_max": projected_gravity[:, :2].norm(dim=1).max(),
             "upright_factor_mean": (torch.clamp(-projected_gravity[:, 2], 0, 0.7) / 0.7).mean(),
+            "base_height_mean": base_height.mean(),
+            "base_height_cmd_mean": base_height_cmd.mean(),
+            "base_height_error_abs_mean": base_height_error.abs().mean(),
+            "base_height_env0": base_height[0],
+            "base_height_cmd_env0": base_height_cmd[0],
             "base_lin_vel_env0": base_lin_vel[0],
             "base_ang_vel_env0": base_ang_vel[0],
             "commands_env0": commands[0],
@@ -451,6 +463,9 @@ class WlSequenceRunner:
                 "tilt_xy_abs_max": self._as_float(leg_stats["tilt_xy_abs_max"]),
                 "upright_factor_mean": self._as_float(leg_stats["upright_factor_mean"]),
                 "projected_gravity_mean": self._as_list(leg_stats["projected_gravity_mean"]),
+                "base_height_mean": self._as_float(leg_stats["base_height_mean"]),
+                "base_height_cmd_mean": self._as_float(leg_stats["base_height_cmd_mean"]),
+                "base_height_error_abs_mean": self._as_float(leg_stats["base_height_error_abs_mean"]),
                 "theta0_lr_error_abs_mean": self._as_float(leg_stats["theta0_lr_error_abs_mean"]),
                 "L0_lr_error_abs_mean": self._as_float(leg_stats["L0_lr_error_abs_mean"]),
                 "tp_cmd_mean_nm": self._as_list(leg_stats["tp_cmd_mean"]),
@@ -459,6 +474,8 @@ class WlSequenceRunner:
             },
             "env0": {
                 "command": self._as_list(leg_stats["commands_env0"]),
+                "base_height": self._as_float(leg_stats["base_height_env0"]),
+                "base_height_cmd": self._as_float(leg_stats["base_height_cmd_env0"]),
                 "base_lin_vel": self._as_list(leg_stats["base_lin_vel_env0"]),
                 "base_ang_vel": self._as_list(leg_stats["base_ang_vel_env0"]),
                 "left_action": self._as_list(leg_stats["left_action_env0"]),

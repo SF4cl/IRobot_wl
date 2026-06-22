@@ -334,7 +334,11 @@ def wl_vmc_commands(
     observation matches the height reward target.
     """
     commands = env.command_manager.get_command(command_name)
-    height_buf = torch.full((env.num_envs,), height_command, device=env.device, dtype=commands.dtype)
+    command_term = env.command_manager.get_term(command_name)
+    if hasattr(command_term, "base_height_command_b"):
+        height_buf = command_term.base_height_command_b.to(dtype=commands.dtype)
+    else:
+        height_buf = torch.full((env.num_envs,), height_command, device=env.device, dtype=commands.dtype)
 
     obs = torch.stack(
         [

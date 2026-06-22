@@ -110,6 +110,14 @@ class MixedModeVelocityCommand(UniformThresholdVelocityCommand):
 
     cfg: "MixedModeVelocityCommandCfg"
 
+    def __init__(self, cfg: "MixedModeVelocityCommandCfg", env: ManagerBasedEnv):
+        super().__init__(cfg, env)
+        self.base_height_command_b = torch.full(
+            (self.num_envs,),
+            0.5 * (self.cfg.base_height_range[0] + self.cfg.base_height_range[1]),
+            device=self.device,
+        )
+
     def _resample_command(self, env_ids: Sequence[int]):
         super()._resample_command(env_ids)
         count = len(env_ids)
@@ -148,6 +156,9 @@ class MixedModeVelocityCommand(UniformThresholdVelocityCommand):
         self.vel_command_b[local_ids[arc_mask], 2] = _sample_nonzero_uniform(
             arc_mask.sum(), self.cfg.ranges.ang_vel_z, self.cfg.min_ang_vel_z, self.device
         )
+        self.base_height_command_b[env_ids] = torch.empty(count, device=self.device).uniform_(
+            *self.cfg.base_height_range
+        )
 
 
 @configclass
@@ -162,6 +173,7 @@ class MixedModeVelocityCommandCfg(UniformThresholdVelocityCommandCfg):
     mode_probabilities: tuple[float, float, float, float] = (0.1, 0.3, 0.3, 0.3)
     min_lin_vel_x: float = 0.15
     min_ang_vel_z: float = 0.25
+    base_height_range: tuple[float, float] = (0.19, 0.32)
 
 
 class DiscreteCommandController(CommandTerm):

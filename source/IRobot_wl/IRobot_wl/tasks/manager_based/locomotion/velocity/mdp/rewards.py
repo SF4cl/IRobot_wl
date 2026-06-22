@@ -958,6 +958,68 @@ def base_height_enhance(
     return reward
 
 
+def command_base_height_l2(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    target_height: float | None = None,
+    fallback_target_height: float = 0.19,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    sensor_cfg: SceneEntityCfg | None = None,
+) -> torch.Tensor:
+    """Penalize root height error from the sampled base-height command."""
+    command_term = env.command_manager.get_term(command_name)
+    sampled_target_height = getattr(command_term, "base_height_command_b", None)
+    if sampled_target_height is None:
+        fallback = fallback_target_height if target_height is None else target_height
+        sampled_target_height = torch.full((env.num_envs,), fallback, device=env.device)
+
+    asset: RigidObject = env.scene[asset_cfg.name]
+    if sensor_cfg is not None:
+        sensor: RayCaster = env.scene[sensor_cfg.name]
+        ray_hits = sensor.data.ray_hits_w[..., 2]
+        if torch.isnan(ray_hits).any() or torch.isinf(ray_hits).any() or torch.max(torch.abs(ray_hits)) > 1e6:
+            adjusted_target_height = asset.data.root_link_pos_w[:, 2]
+        else:
+            adjusted_target_height = sampled_target_height + torch.mean(ray_hits, dim=1)
+    else:
+        adjusted_target_height = sampled_target_height
+
+    reward = torch.square(asset.data.root_pos_w[:, 2] - adjusted_target_height)
+    reward *= torch.clamp(-env.scene["robot"].data.projected_gravity_b[:, 2], 0, 0.7) / 0.7
+    return reward
+
+
+def command_base_height_enhance(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    target_height: float | None = None,
+    fallback_target_height: float = 0.19,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    sensor_cfg: SceneEntityCfg | None = None,
+) -> torch.Tensor:
+    """Exponential base-height tracking reward using the sampled height command."""
+    command_term = env.command_manager.get_term(command_name)
+    sampled_target_height = getattr(command_term, "base_height_command_b", None)
+    if sampled_target_height is None:
+        fallback = fallback_target_height if target_height is None else target_height
+        sampled_target_height = torch.full((env.num_envs,), fallback, device=env.device)
+
+    asset: RigidObject = env.scene[asset_cfg.name]
+    if sensor_cfg is not None:
+        sensor: RayCaster = env.scene[sensor_cfg.name]
+        ray_hits = sensor.data.ray_hits_w[..., 2]
+        if torch.isnan(ray_hits).any() or torch.isinf(ray_hits).any() or torch.max(torch.abs(ray_hits)) > 1e6:
+            adjusted_target_height = asset.data.root_link_pos_w[:, 2]
+        else:
+            adjusted_target_height = sampled_target_height + torch.mean(ray_hits, dim=1)
+    else:
+        adjusted_target_height = sampled_target_height
+
+    base_height = torch.mean(asset.data.root_pos_w[:, 2].unsqueeze(1) - 0.0, dim=1)
+    base_height_error = torch.square(base_height - adjusted_target_height)
+    return torch.exp(-base_height_error / 0.001 / 10) - 1
+
+
 def body_lin_acc_l2(
     env: ManagerBasedRLEnv,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),

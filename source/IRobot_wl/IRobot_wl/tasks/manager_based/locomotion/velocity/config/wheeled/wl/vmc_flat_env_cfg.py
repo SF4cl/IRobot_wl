@@ -19,9 +19,18 @@ class WLVMCVanillaFlatEnvCfg(WLVMCVanillaRoughEnvCfg):
         self.episode_length_s = 60.0
 
         # override rewards
+        self.commands.base_velocity.base_height_range = (0.19, 0.32)
+        self.observations.policy.velocity_commands.params["height_command"] = 0.255
+        self.observations.critic.velocity_commands.params["height_command"] = 0.255
         self.rewards.base_height_l2.weight = -0.5
+        self.rewards.base_height_l2.func = mdp.command_base_height_l2
+        self.rewards.base_height_l2.params["command_name"] = "base_velocity"
+        self.rewards.base_height_l2.params["fallback_target_height"] = 0.255
         self.rewards.base_height_l2.params["sensor_cfg"] = None
         self.rewards.base_height_enhance.weight = 0.6
+        self.rewards.base_height_enhance.func = mdp.command_base_height_enhance
+        self.rewards.base_height_enhance.params["command_name"] = "base_velocity"
+        self.rewards.base_height_enhance.params["fallback_target_height"] = 0.255
         self.rewards.base_height_enhance.params["sensor_cfg"] = SceneEntityCfg("height_scanner_base")
         self.scene.terrain.terrain_type = "plane"
         self.scene.terrain.terrain_generator = None
