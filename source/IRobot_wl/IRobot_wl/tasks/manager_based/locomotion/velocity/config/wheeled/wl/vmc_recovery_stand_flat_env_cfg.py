@@ -2,6 +2,7 @@
 
 from isaaclab.managers import RewardTermCfg as RewTerm
 from isaaclab.managers import SceneEntityCfg
+from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.utils import configclass
 
 import IRobot_wl.tasks.manager_based.locomotion.velocity.mdp as mdp
@@ -53,7 +54,7 @@ class WLVMCRecoveryStandFlatEnvCfg(WLVMCRecoveryFlatEnvCfg):
         # Keep a small alive bonus for numerical stability, but do not let the
         # policy score well by simply surviving in a low-reward stuck pose.
         self.rewards.alive = RewTerm(func=mdp.is_alive, weight=0.2)
-        self.rewards.is_terminated = RewTerm(func=mdp.is_terminated, weight=-2.0)
+        self.rewards.is_terminated = RewTerm(func=mdp.is_terminated, weight=-5.0)
         self.rewards.flat_orientation_l2 = RewTerm(
             func=mdp.self_right_orientation_l2,
             weight=-6.0,
@@ -252,6 +253,39 @@ class WLVMCRecoveryStandFlatEnvCfg(WLVMCRecoveryFlatEnvCfg):
             },
         )
         self.rewards.action_rate_l2 = RewTerm(func=mdp.action_rate_l2, weight=-0.008)
+
+        # ------------------------------Terminations------------------------------
+        # RecoveryFlat disables contact-based failure termination so the robot can
+        # freely use body contact to self-right. RecoveryStand adds task-timeout
+        # failures so a stuck pose does not occupy the full 12 s rollout.
+        self.terminations.recovery_stand_not_upright = DoneTerm(
+            func=mdp.recovery_stand_timeout_not_upright,
+            params={
+                "max_time_s": 5.0,
+                "min_upright_factor": 0.55,
+                "upright_threshold": -0.85,
+                "fallen_threshold": -0.35,
+                "asset_cfg": SceneEntityCfg("robot"),
+            },
+        )
+        self.terminations.recovery_stand_not_standing = DoneTerm(
+            func=mdp.recovery_stand_timeout_not_standing,
+            params={
+                "max_time_s": 9.0,
+                "min_upright_factor": 0.75,
+                "min_height": 0.165,
+                "target_total_force_n": 100.0,
+                "min_each_force_n": 25.0,
+                "min_load_score": 0.35,
+                "upright_threshold": -0.85,
+                "fallen_threshold": -0.35,
+                "sensor_cfg": SceneEntityCfg(
+                    "contact_forces",
+                    body_names=["l_wheel_Link", "r_wheel_Link"],
+                ),
+                "asset_cfg": SceneEntityCfg("robot"),
+            },
+        )
 
         if self.__class__.__name__ == "WLVMCRecoveryStandFlatEnvCfg":
             self.disable_zero_weight_rewards()

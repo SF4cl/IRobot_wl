@@ -1890,6 +1890,53 @@ def recovery_stand_late_no_wheel_load(
     return time_gate * torch.square(torch.clamp(min_load_score - load_score, min=0.0))
 
 
+def recovery_stand_timeout_not_upright(
+    env: ManagerBasedRLEnv,
+    max_time_s: float = 5.0,
+    min_upright_factor: float = 0.55,
+    upright_threshold: float = -0.85,
+    fallen_threshold: float = -0.35,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Terminate when self-righting has clearly failed within the early window."""
+    elapsed_time = env.episode_length_buf.to(dtype=torch.float32) * env.step_dt
+    upright = recovery_stand_upright_factor(env, upright_threshold, fallen_threshold, asset_cfg)
+    return (elapsed_time > max_time_s) & (upright < min_upright_factor)
+
+
+def recovery_stand_timeout_not_standing(
+    env: ManagerBasedRLEnv,
+    max_time_s: float = 9.0,
+    min_upright_factor: float = 0.75,
+    min_height: float = 0.165,
+    target_total_force_n: float = 100.0,
+    min_each_force_n: float = 25.0,
+    min_load_score: float = 0.35,
+    upright_threshold: float = -0.85,
+    fallen_threshold: float = -0.35,
+    sensor_cfg: SceneEntityCfg = SceneEntityCfg("contact_forces"),
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Terminate late episodes that are upright-ish but not truly standing on the wheels."""
+    asset: RigidObject = env.scene[asset_cfg.name]
+    elapsed_time = env.episode_length_buf.to(dtype=torch.float32) * env.step_dt
+    upright = recovery_stand_upright_factor(env, upright_threshold, fallen_threshold, asset_cfg)
+    load_score = recovery_stand_wheel_load(
+        env,
+        target_total_force_n=target_total_force_n,
+        min_each_force_n=min_each_force_n,
+        upright_threshold=upright_threshold,
+        fallen_threshold=fallen_threshold,
+        sensor_cfg=sensor_cfg,
+        asset_cfg=asset_cfg,
+    )
+
+    not_standing = (upright < min_upright_factor) | (asset.data.root_pos_w[:, 2] < min_height) | (
+        load_score < min_load_score
+    )
+    return (elapsed_time > max_time_s) & not_standing
+
+
 def recovery_stand_success_bonus(
     env: ManagerBasedRLEnv,
     target_height: float = 0.19,
