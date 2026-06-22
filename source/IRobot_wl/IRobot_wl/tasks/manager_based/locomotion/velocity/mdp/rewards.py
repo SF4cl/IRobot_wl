@@ -1060,6 +1060,26 @@ def vmc_force_action_l2(env: ManagerBasedRLEnv, action_name: str = "vmc") -> tor
     return torch.sum(torch.square(actions[:, [1, 4]]), dim=1)
 
 
+def vmc_force_over_l2(
+    env: ManagerBasedRLEnv,
+    action_name: str = "vmc",
+    force_limit_n: float = 65.0,
+    normalize_n: float = 20.0,
+) -> torch.Tensor:
+    """Penalize axial support force only above a reasonable per-leg limit."""
+    action_term = env.action_manager.get_term(action_name)
+    actions = getattr(action_term, "processed_actions", action_term.raw_actions)
+    force_actions = actions[:, [1, 4]]
+
+    action_scale_force = getattr(action_term.cfg, "action_scale_force", 1.0)
+    feedforward_force = getattr(action_term.cfg, "feedforward_force", 0.0)
+    force_leg = force_actions * action_scale_force + feedforward_force
+    over_force = torch.clamp(force_leg - force_limit_n, min=0.0) / normalize_n
+    reward = torch.sum(torch.square(over_force), dim=1)
+    reward *= torch.clamp(-env.scene["robot"].data.projected_gravity_b[:, 2], 0, 0.7) / 0.7
+    return reward
+
+
 def body_lin_acc_l2(
     env: ManagerBasedRLEnv,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
@@ -1478,17 +1498,93 @@ def recovery_stand_upright_factor(
     return torch.clamp((fallen_threshold - proj_z) / (fallen_threshold - upright_threshold), min=0.0, max=1.0)
 
 
+def _recovery_stand_leg_state(
+    env: ManagerBasedRLEnv,
+    leg_joint_names: list[str] | None,
+    l1: float,
+    l2: float,
+    offset: float,
+    theta1_offset: float,
+    theta2_offset: float,
+    asset_cfg: SceneEntityCfg,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Return task-space leg length and swing angle for RecoveryStand rewards."""
+    from IRobot_wl.tasks.manager_based.locomotion.velocity.mdp.vmc import forward_kinematics
+
+    if leg_joint_names is None:
+        zeros = torch.zeros(env.num_envs, 2, device=env.device)
+        return zeros, zeros
+
+    asset: Articulation = env.scene[asset_cfg.name]
+    joint_indices = asset.find_joints(leg_joint_names)[0]
+    dof_pos = asset.data.joint_pos[:, joint_indices]
+    theta1 = torch.stack([dof_pos[:, 0] + theta1_offset, -dof_pos[:, 2] + theta1_offset], dim=1)
+    theta2 = torch.stack([dof_pos[:, 1] + theta2_offset, -dof_pos[:, 3] + theta2_offset], dim=1)
+    return forward_kinematics(theta1, theta2, l1, l2, offset)
+
+
 def recovery_stand_base_height_l2(
     env: ManagerBasedRLEnv,
     target_height: float = 0.18,
     upright_threshold: float = -0.85,
     fallen_threshold: float = -0.35,
+    gate_by_theta0: bool = False,
+    theta0_ready_std: float = 0.35,
+    leg_joint_names: list[str] | None = None,
+    l1: float = 0.21665632675675972,
+    l2: float = 0.2540023491164531,
+    offset: float = -0.007712217793726145,
+    theta1_offset: float = 0.14299916248023697,
+    theta2_offset: float = 2.406020345452543,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
 ) -> torch.Tensor:
-    """Penalize low/high base height only after the body is mostly upright."""
+    """Penalize base height error after upright, optionally only when wheels are under the body."""
     asset: RigidObject = env.scene[asset_cfg.name]
     phase = recovery_stand_upright_factor(env, upright_threshold, fallen_threshold, asset_cfg)
+    if gate_by_theta0:
+        _, theta0 = _recovery_stand_leg_state(
+            env, leg_joint_names, l1, l2, offset, theta1_offset, theta2_offset, asset_cfg
+        )
+        theta0_ready = torch.exp(-torch.mean(torch.square(theta0), dim=1) / (theta0_ready_std**2))
+        phase = phase * theta0_ready
     return phase * torch.square(asset.data.root_pos_w[:, 2] - target_height)
+
+
+def recovery_stand_base_height_progress(
+    env: ManagerBasedRLEnv,
+    target_height: float = 0.19,
+    upright_threshold: float = -0.85,
+    fallen_threshold: float = -0.35,
+    theta0_ready_std: float = 0.35,
+    max_progress_rate: float = 0.08,
+    leg_joint_names: list[str] | None = None,
+    l1: float = 0.21665632675675972,
+    l2: float = 0.2540023491164531,
+    offset: float = -0.007712217793726145,
+    theta1_offset: float = 0.14299916248023697,
+    theta2_offset: float = 2.406020345452543,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Reward upward base-height progress once upright and leg angle is ready."""
+    asset: RigidObject = env.scene[asset_cfg.name]
+    base_height = asset.data.root_pos_w[:, 2]
+    prev_name = "_recovery_stand_prev_base_height"
+    prev_height = getattr(env, prev_name, None)
+    if prev_height is None or prev_height.shape != base_height.shape:
+        prev_height = base_height.detach().clone()
+
+    progress_rate = (base_height - prev_height) / env.step_dt
+    progress_rate = torch.clamp(progress_rate, min=0.0, max=max_progress_rate)
+    below_target = (base_height < target_height).float()
+
+    _, theta0 = _recovery_stand_leg_state(
+        env, leg_joint_names, l1, l2, offset, theta1_offset, theta2_offset, asset_cfg
+    )
+    theta0_ready = torch.exp(-torch.mean(torch.square(theta0), dim=1) / (theta0_ready_std**2))
+    phase = recovery_stand_upright_factor(env, upright_threshold, fallen_threshold, asset_cfg)
+
+    setattr(env, prev_name, base_height.detach().clone())
+    return phase * theta0_ready * below_target * progress_rate
 
 
 def recovery_stand_lin_vel_xy_l2(
@@ -1530,17 +1626,9 @@ def recovery_stand_leg_length_l2(
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
 ) -> torch.Tensor:
     """Phase-aware leg length target: retract while fallen, extend after upright."""
-    from IRobot_wl.tasks.manager_based.locomotion.velocity.mdp.vmc import forward_kinematics
-
-    asset: Articulation = env.scene[asset_cfg.name]
-    if leg_joint_names is None:
-        return torch.zeros(env.num_envs, device=env.device)
-
-    joint_indices = asset.find_joints(leg_joint_names)[0]
-    dof_pos = asset.data.joint_pos[:, joint_indices]
-    theta1 = torch.stack([dof_pos[:, 0] + theta1_offset, -dof_pos[:, 2] + theta1_offset], dim=1)
-    theta2 = torch.stack([dof_pos[:, 1] + theta2_offset, -dof_pos[:, 3] + theta2_offset], dim=1)
-    leg_length, _ = forward_kinematics(theta1, theta2, l1, l2, offset)
+    leg_length, _ = _recovery_stand_leg_state(
+        env, leg_joint_names, l1, l2, offset, theta1_offset, theta2_offset, asset_cfg
+    )
 
     phase = recovery_stand_upright_factor(env, upright_threshold, fallen_threshold, asset_cfg).unsqueeze(1)
     target = retracted_length * (1.0 - phase) + standing_length * phase
@@ -1560,20 +1648,100 @@ def recovery_stand_theta0_l2(
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
 ) -> torch.Tensor:
     """Bring the wheels under the body after the robot is mostly upright."""
-    from IRobot_wl.tasks.manager_based.locomotion.velocity.mdp.vmc import forward_kinematics
-
-    asset: Articulation = env.scene[asset_cfg.name]
-    if leg_joint_names is None:
-        return torch.zeros(env.num_envs, device=env.device)
-
-    joint_indices = asset.find_joints(leg_joint_names)[0]
-    dof_pos = asset.data.joint_pos[:, joint_indices]
-    theta1 = torch.stack([dof_pos[:, 0] + theta1_offset, -dof_pos[:, 2] + theta1_offset], dim=1)
-    theta2 = torch.stack([dof_pos[:, 1] + theta2_offset, -dof_pos[:, 3] + theta2_offset], dim=1)
-    _, theta0 = forward_kinematics(theta1, theta2, l1, l2, offset)
+    _, theta0 = _recovery_stand_leg_state(
+        env, leg_joint_names, l1, l2, offset, theta1_offset, theta2_offset, asset_cfg
+    )
 
     phase = recovery_stand_upright_factor(env, upright_threshold, fallen_threshold, asset_cfg)
     return phase * torch.mean(torch.square(theta0), dim=1)
+
+
+def recovery_stand_theta0_ready_exp(
+    env: ManagerBasedRLEnv,
+    std: float = 0.35,
+    upright_threshold: float = -0.85,
+    fallen_threshold: float = -0.35,
+    leg_joint_names: list[str] | None = None,
+    l1: float = 0.21665632675675972,
+    l2: float = 0.2540023491164531,
+    offset: float = -0.007712217793726145,
+    theta1_offset: float = 0.14299916248023697,
+    theta2_offset: float = 2.406020345452543,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Reward placing both wheels below the body before asking for full lift."""
+    _, theta0 = _recovery_stand_leg_state(
+        env, leg_joint_names, l1, l2, offset, theta1_offset, theta2_offset, asset_cfg
+    )
+    phase = recovery_stand_upright_factor(env, upright_threshold, fallen_threshold, asset_cfg)
+    theta0_error = torch.mean(torch.square(theta0), dim=1)
+    return phase * torch.exp(-theta0_error / (std**2))
+
+
+def recovery_stand_negative_force_l2(
+    env: ManagerBasedRLEnv,
+    action_name: str = "vmc",
+    upright_threshold: float = -0.85,
+    fallen_threshold: float = -0.35,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Discourage unloading the legs after the body is upright."""
+    action_term = env.action_manager.get_term(action_name)
+    actions = getattr(action_term, "processed_actions", action_term.raw_actions)
+    negative_force_actions = torch.clamp(-actions[:, [1, 4]], min=0.0)
+
+    phase = recovery_stand_upright_factor(env, upright_threshold, fallen_threshold, asset_cfg).unsqueeze(1)
+    return torch.mean(torch.square(negative_force_actions) * phase, dim=1)
+
+
+def recovery_stand_leg_ground_contact(
+    env: ManagerBasedRLEnv,
+    threshold: float = 1.0,
+    upright_threshold: float = -0.85,
+    fallen_threshold: float = -0.35,
+    sensor_cfg: SceneEntityCfg = SceneEntityCfg("contact_forces"),
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Penalize leg-link ground contact during the upright stand-up phase."""
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    net_contact_forces = contact_sensor.data.net_forces_w_history
+    contact_force = torch.max(torch.norm(net_contact_forces[:, :, sensor_cfg.body_ids], dim=-1), dim=1)[0]
+    contact_count = torch.sum((contact_force > threshold).float(), dim=1)
+
+    phase = recovery_stand_upright_factor(env, upright_threshold, fallen_threshold, asset_cfg)
+    return phase * contact_count
+
+
+def recovery_stand_success_bonus(
+    env: ManagerBasedRLEnv,
+    target_height: float = 0.19,
+    min_leg_length: float = 0.145,
+    theta0_threshold: float = 0.35,
+    height_margin: float = 0.015,
+    lin_vel_threshold: float = 0.18,
+    ang_vel_threshold: float = 0.35,
+    upright_threshold: float = -0.85,
+    leg_joint_names: list[str] | None = None,
+    l1: float = 0.21665632675675972,
+    l2: float = 0.2540023491164531,
+    offset: float = -0.007712217793726145,
+    theta1_offset: float = 0.14299916248023697,
+    theta2_offset: float = 2.406020345452543,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Sparse stand success: upright, wheels below body, tall enough, and quiet."""
+    asset: Articulation = env.scene[asset_cfg.name]
+    leg_length, theta0 = _recovery_stand_leg_state(
+        env, leg_joint_names, l1, l2, offset, theta1_offset, theta2_offset, asset_cfg
+    )
+
+    upright = asset.data.projected_gravity_b[:, 2] < upright_threshold
+    tall = asset.data.root_pos_w[:, 2] > (target_height - height_margin)
+    long_enough = torch.all(leg_length > min_leg_length, dim=1)
+    wheels_under_body = torch.all(torch.abs(theta0) < theta0_threshold, dim=1)
+    quiet_lin = torch.linalg.norm(asset.data.root_lin_vel_b[:, :2], dim=1) < lin_vel_threshold
+    quiet_ang = torch.linalg.norm(asset.data.root_ang_vel_b[:, :2], dim=1) < ang_vel_threshold
+    return (upright & tall & long_enough & wheels_under_body & quiet_lin & quiet_ang).float()
 
 
 def recovery_stand_wheel_vel_l2(

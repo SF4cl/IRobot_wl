@@ -43,7 +43,7 @@ class WLVMCRecoveryFlatEnvCfg(WLVMCVanillaFlatEnvCfg):
         # task.  The previous recovery run let the policy spin the wheels into
         # extreme velocities, eventually corrupting the simulation with NaNs.
         self.vmc_actions.l0_offset = 0.13
-        self.vmc_actions.feedforward_force = 35.0
+        self.vmc_actions.feedforward_force = 0.0
         self.vmc_actions.action_scale_tp = 10.0
         self.vmc_actions.action_scale_force = 25.0
         self.vmc_actions.action_scale_wheel_torque = 0.0

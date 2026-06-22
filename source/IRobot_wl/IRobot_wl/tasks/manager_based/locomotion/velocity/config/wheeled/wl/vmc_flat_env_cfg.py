@@ -35,7 +35,7 @@ class WLVMCVanillaFlatEnvCfg(WLVMCVanillaRoughEnvCfg):
         self.rewards.base_height_enhance.params["sensor_cfg"] = SceneEntityCfg("height_scanner_base")
         self.rewards.base_height_over_l2 = RewTerm(
             func=mdp.command_base_height_over_l2,
-            weight=-40.0,
+            weight=-100.0,
             params={
                 "command_name": "base_velocity",
                 "fallback_target_height": 0.255,
@@ -46,8 +46,17 @@ class WLVMCVanillaFlatEnvCfg(WLVMCVanillaRoughEnvCfg):
         )
         self.rewards.vmc_force_action_l2 = RewTerm(
             func=mdp.vmc_force_action_l2,
-            weight=-0.03,
+            weight=-0.01,
             params={"action_name": "vmc"},
+        )
+        self.rewards.vmc_force_over_l2 = RewTerm(
+            func=mdp.vmc_force_over_l2,
+            weight=-0.3,
+            params={
+                "action_name": "vmc",
+                "force_limit_n": 65.0,
+                "normalize_n": 20.0,
+            },
         )
         self.scene.terrain.terrain_type = "plane"
         self.scene.terrain.terrain_generator = None
@@ -79,7 +88,7 @@ class WLVMCVanillaFlatEnvCfg(WLVMCVanillaRoughEnvCfg):
         self.rewards.theta0_nominal.weight = -0.6
         self.rewards.leg_length_symmetry.weight = -1.0
         self.rewards.leg_angle_symmetry.weight = -2.2
-        self.rewards.upward.weight = 0.2
+        self.rewards.upward.weight = 0.0
         self.rewards.action_rate_l2.weight = -0.02
         self.rewards.stand_still.weight = -0.5
         self.rewards.stand_still.params["lin_x_threshold"] = 0.05
