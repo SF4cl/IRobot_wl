@@ -49,3 +49,31 @@ class WLVMCVanillaFlatPPORunnerCfg(WLVMCVanillaRoughPPORunnerCfg):
 
         self.max_iterations = 5000
         self.experiment_name = "wl_vmc_flat"
+
+
+@configclass
+class WLVMCRecoveryFlatPPORunnerCfg(WLVMCVanillaRoughPPORunnerCfg):
+    def __post_init__(self):
+        super().__post_init__()
+
+        self.num_steps_per_env = 48
+        self.max_iterations = 3000
+        self.save_interval = 100
+        self.experiment_name = "wl_vmc_recovery_flat"
+        self.policy.init_noise_std = 0.25
+        self.algorithm.entropy_coef = 0.003
+        self.algorithm.desired_kl = 0.003
+
+
+@configclass
+class WLVMCRecoveryStandFlatPPORunnerCfg(WLVMCVanillaRoughPPORunnerCfg):
+    def __post_init__(self):
+        super().__post_init__()
+
+        self.num_steps_per_env = 48
+        self.max_iterations = 3000
+        self.save_interval = 100
+        self.experiment_name = "wl_vmc_recovery_stand_flat"
+        self.policy.init_noise_std = 0.22
+        self.algorithm.entropy_coef = 0.002
+        self.algorithm.desired_kl = 0.003

@@ -27,3 +27,23 @@ gym.register(
         "cusrl_cfg_entry_point": f"{agents.__name__}.vmc_cusrl_ppo_cfg:WLVMCVanillaRoughTrainerCfg",
     },
 )
+
+gym.register(
+    id="IRobot-WL-Recovery-VMC-Flat-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.vmc_recovery_flat_env_cfg:WLVMCRecoveryFlatEnvCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.vmc_rsl_rl_ppo_cfg:WLVMCRecoveryFlatPPORunnerCfg",
+    },
+)
+
+gym.register(
+    id="IRobot-WL-Recovery-Stand-VMC-Flat-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.vmc_recovery_stand_flat_env_cfg:WLVMCRecoveryStandFlatEnvCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.vmc_rsl_rl_ppo_cfg:WLVMCRecoveryStandFlatPPORunnerCfg",
+    },
+)

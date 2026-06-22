@@ -1361,6 +1361,131 @@ def recovery_action_smoothness(
     return torch.sum(torch.square(env.action_manager.action - env.action_manager.prev_action), dim=1)
 
 
+def recovery_stand_upright_factor(
+    env: ManagerBasedRLEnv,
+    upright_threshold: float = -0.85,
+    fallen_threshold: float = -0.35,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Smooth phase factor for stand-up rewards.
+
+    Returns 0 when clearly fallen and 1 when close to upright.
+    """
+    asset: RigidObject = env.scene[asset_cfg.name]
+    proj_z = asset.data.projected_gravity_b[:, 2]
+    return torch.clamp((fallen_threshold - proj_z) / (fallen_threshold - upright_threshold), min=0.0, max=1.0)
+
+
+def recovery_stand_base_height_l2(
+    env: ManagerBasedRLEnv,
+    target_height: float = 0.18,
+    upright_threshold: float = -0.85,
+    fallen_threshold: float = -0.35,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Penalize low/high base height only after the body is mostly upright."""
+    asset: RigidObject = env.scene[asset_cfg.name]
+    phase = recovery_stand_upright_factor(env, upright_threshold, fallen_threshold, asset_cfg)
+    return phase * torch.square(asset.data.root_pos_w[:, 2] - target_height)
+
+
+def recovery_stand_lin_vel_xy_l2(
+    env: ManagerBasedRLEnv,
+    upright_threshold: float = -0.85,
+    fallen_threshold: float = -0.35,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Penalize horizontal drift after self-righting to encourage in-place stand-up."""
+    asset: RigidObject = env.scene[asset_cfg.name]
+    phase = recovery_stand_upright_factor(env, upright_threshold, fallen_threshold, asset_cfg)
+    return phase * torch.sum(torch.square(asset.data.root_lin_vel_b[:, :2]), dim=1)
+
+
+def recovery_stand_ang_vel_z_l2(
+    env: ManagerBasedRLEnv,
+    upright_threshold: float = -0.85,
+    fallen_threshold: float = -0.35,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Penalize yaw spinning after self-righting."""
+    asset: RigidObject = env.scene[asset_cfg.name]
+    phase = recovery_stand_upright_factor(env, upright_threshold, fallen_threshold, asset_cfg)
+    return phase * torch.square(asset.data.root_ang_vel_b[:, 2])
+
+
+def recovery_stand_leg_length_l2(
+    env: ManagerBasedRLEnv,
+    retracted_length: float = 0.14,
+    standing_length: float = 0.22,
+    upright_threshold: float = -0.85,
+    fallen_threshold: float = -0.35,
+    leg_joint_names: list[str] | None = None,
+    l1: float = 0.21665632675675972,
+    l2: float = 0.2540023491164531,
+    offset: float = -0.007712217793726145,
+    theta1_offset: float = 0.14299916248023697,
+    theta2_offset: float = 2.406020345452543,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Phase-aware leg length target: retract while fallen, extend after upright."""
+    from IRobot_wl.tasks.manager_based.locomotion.velocity.mdp.vmc import forward_kinematics
+
+    asset: Articulation = env.scene[asset_cfg.name]
+    if leg_joint_names is None:
+        return torch.zeros(env.num_envs, device=env.device)
+
+    joint_indices = asset.find_joints(leg_joint_names)[0]
+    dof_pos = asset.data.joint_pos[:, joint_indices]
+    theta1 = torch.stack([dof_pos[:, 0] + theta1_offset, -dof_pos[:, 2] + theta1_offset], dim=1)
+    theta2 = torch.stack([dof_pos[:, 1] + theta2_offset, -dof_pos[:, 3] + theta2_offset], dim=1)
+    leg_length, _ = forward_kinematics(theta1, theta2, l1, l2, offset)
+
+    phase = recovery_stand_upright_factor(env, upright_threshold, fallen_threshold, asset_cfg).unsqueeze(1)
+    target = retracted_length * (1.0 - phase) + standing_length * phase
+    return torch.mean(torch.square(leg_length - target), dim=1)
+
+
+def recovery_stand_theta0_l2(
+    env: ManagerBasedRLEnv,
+    upright_threshold: float = -0.85,
+    fallen_threshold: float = -0.35,
+    leg_joint_names: list[str] | None = None,
+    l1: float = 0.21665632675675972,
+    l2: float = 0.2540023491164531,
+    offset: float = -0.007712217793726145,
+    theta1_offset: float = 0.14299916248023697,
+    theta2_offset: float = 2.406020345452543,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Bring the wheels under the body after the robot is mostly upright."""
+    from IRobot_wl.tasks.manager_based.locomotion.velocity.mdp.vmc import forward_kinematics
+
+    asset: Articulation = env.scene[asset_cfg.name]
+    if leg_joint_names is None:
+        return torch.zeros(env.num_envs, device=env.device)
+
+    joint_indices = asset.find_joints(leg_joint_names)[0]
+    dof_pos = asset.data.joint_pos[:, joint_indices]
+    theta1 = torch.stack([dof_pos[:, 0] + theta1_offset, -dof_pos[:, 2] + theta1_offset], dim=1)
+    theta2 = torch.stack([dof_pos[:, 1] + theta2_offset, -dof_pos[:, 3] + theta2_offset], dim=1)
+    _, theta0 = forward_kinematics(theta1, theta2, l1, l2, offset)
+
+    phase = recovery_stand_upright_factor(env, upright_threshold, fallen_threshold, asset_cfg)
+    return phase * torch.mean(torch.square(theta0), dim=1)
+
+
+def recovery_stand_wheel_vel_l2(
+    env: ManagerBasedRLEnv,
+    upright_threshold: float = -0.85,
+    fallen_threshold: float = -0.35,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Penalize sustained wheel spin once upright; wheels may still assist recovery."""
+    asset: Articulation = env.scene[asset_cfg.name]
+    phase = recovery_stand_upright_factor(env, upright_threshold, fallen_threshold, asset_cfg)
+    return phase * torch.mean(torch.square(asset.data.joint_vel[:, asset_cfg.joint_ids]), dim=1)
+
+
 def recovery_wheel_assist(
     env: ManagerBasedRLEnv,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
