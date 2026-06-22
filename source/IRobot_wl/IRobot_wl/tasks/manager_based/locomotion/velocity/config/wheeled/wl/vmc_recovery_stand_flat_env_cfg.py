@@ -16,6 +16,8 @@ class WLVMCRecoveryStandFlatEnvCfg(WLVMCRecoveryFlatEnvCfg):
         super().__post_init__()
 
         self.episode_length_s = 12.0
+        self.low_stand_base_height = 0.19
+        self.low_stand_leg_length = 0.15
 
         # Allow a small amount of wheel authority for balance and in-place
         # correction. Keep this far below locomotion torque during this stage.
@@ -34,6 +36,16 @@ class WLVMCRecoveryStandFlatEnvCfg(WLVMCRecoveryFlatEnvCfg):
         self.events.randomize_reset_base.params["pose_range"]["roll"] = (-1.25, 1.25)
         self.events.randomize_reset_base.params["pose_range"]["pitch"] = (2.7, 3.14)
         self.events.randomize_reset_joints.params["position_range"] = (-0.25, 0.25)
+
+        # Keep the stand-up stage on the lowest fixed target first.  The flat
+        # locomotion task randomizes this command, but RecoveryStand should
+        # learn a stable low stand before target-height variation is added.
+        self.commands.base_velocity.base_height_range = (
+            self.low_stand_base_height,
+            self.low_stand_base_height,
+        )
+        self.observations.policy.velocity_commands.params["height_command"] = self.low_stand_base_height
+        self.observations.critic.velocity_commands.params["height_command"] = self.low_stand_base_height
 
         self._disable_all_rewards()
 
@@ -63,7 +75,7 @@ class WLVMCRecoveryStandFlatEnvCfg(WLVMCRecoveryFlatEnvCfg):
             weight=-8.0,
             params={
                 "retracted_length": 0.145,
-                "standing_length": 0.22,
+                "standing_length": self.low_stand_leg_length,
                 "upright_threshold": -0.85,
                 "fallen_threshold": -0.35,
                 "leg_joint_names": self.leg_joint_names,
@@ -84,7 +96,7 @@ class WLVMCRecoveryStandFlatEnvCfg(WLVMCRecoveryFlatEnvCfg):
             func=mdp.recovery_stand_base_height_l2,
             weight=-20.0,
             params={
-                "target_height": 0.18,
+                "target_height": self.low_stand_base_height,
                 "upright_threshold": -0.85,
                 "fallen_threshold": -0.35,
                 "asset_cfg": SceneEntityCfg("robot"),

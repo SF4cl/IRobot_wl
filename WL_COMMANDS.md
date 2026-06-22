@@ -359,7 +359,7 @@ python scripts/rsl_rl/export_onnx.py --help
 
 ```bash
 rsync -avP -e "ssh -p 37023" \
-  root@connect.westc.seetacloud.com:/root/autodl-tmp/wl_workspace/IRobot_wl/logs/rsl_rl/wl_vmc_recovery_flat/2026-06-09_12-00-00 \
+  root@connect.westc.seetacloud.com:/root/autodl-tmp/wl_workspace/IRobot_wl/logs/rsl_rl/wl_vmc_flat/2026-06-22_13-39-49 \
   /home/sf4/Workspace/rm/rl_wheel_legged/IRobot_wl/IRobot_wl/logs/rsl_rl/wl_vmc_recovery_flat/
 ```
 
