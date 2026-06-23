@@ -18,7 +18,7 @@ class WLVMCRecoveryStandFlatEnvCfg(WLVMCRecoveryFlatEnvCfg):
 
         self.episode_length_s = 12.0
         self.low_stand_base_height = 0.19
-        self.low_stand_leg_length = 0.15
+        self.low_stand_leg_length = 0.18
 
         # Allow a small amount of wheel authority for balance and in-place
         # correction. Keep this far below locomotion torque during this stage.
@@ -58,7 +58,7 @@ class WLVMCRecoveryStandFlatEnvCfg(WLVMCRecoveryFlatEnvCfg):
         # Keep a small alive bonus for numerical stability, but do not let the
         # policy score well by simply surviving in a low-reward stuck pose.
         self.rewards.alive = RewTerm(func=mdp.is_alive, weight=0.2)
-        self.rewards.is_terminated = RewTerm(func=mdp.is_terminated, weight=-5.0)
+        self.rewards.is_terminated = RewTerm(func=mdp.is_terminated, weight=-200.0)
         self.rewards.flat_orientation_l2 = RewTerm(
             func=mdp.self_right_orientation_l2,
             weight=-6.0,
@@ -152,6 +152,16 @@ class WLVMCRecoveryStandFlatEnvCfg(WLVMCRecoveryFlatEnvCfg):
                 "asset_cfg": SceneEntityCfg("robot"),
             },
         )
+        self.rewards.recovery_stand_theta0_worst = RewTerm(
+            func=mdp.recovery_stand_theta0_worst_l2,
+            weight=-8.0,
+            params={
+                "upright_threshold": -0.85,
+                "fallen_threshold": -0.35,
+                "leg_joint_names": self.leg_joint_names,
+                "asset_cfg": SceneEntityCfg("robot"),
+            },
+        )
         self.rewards.recovery_stand_base_height = RewTerm(
             func=mdp.recovery_stand_base_height_l2,
             weight=-110.0,
@@ -160,6 +170,21 @@ class WLVMCRecoveryStandFlatEnvCfg(WLVMCRecoveryFlatEnvCfg):
                 "upright_threshold": -0.85,
                 "fallen_threshold": -0.35,
                 "gate_by_theta0": False,
+                "asset_cfg": SceneEntityCfg("robot"),
+            },
+        )
+        self.rewards.recovery_stand_success_bonus = RewTerm(
+            func=mdp.recovery_stand_success_bonus,
+            weight=8.0,
+            params={
+                "target_height": self.low_stand_base_height,
+                "min_leg_length": 0.17,
+                "theta0_threshold": 0.35,
+                "height_margin": 0.015,
+                "lin_vel_threshold": 0.18,
+                "ang_vel_threshold": 0.35,
+                "upright_threshold": -0.85,
+                "leg_joint_names": self.leg_joint_names,
                 "asset_cfg": SceneEntityCfg("robot"),
             },
         )
@@ -220,7 +245,7 @@ class WLVMCRecoveryStandFlatEnvCfg(WLVMCRecoveryFlatEnvCfg):
             func=mdp.recovery_stand_late_low_base,
             weight=-2.5,
             params={
-                "min_height": 0.17,
+                "min_height": 0.18,
                 "height_std": 0.04,
                 "start_time_s": 7.0,
                 "ramp_time_s": 2.0,
@@ -278,8 +303,8 @@ class WLVMCRecoveryStandFlatEnvCfg(WLVMCRecoveryFlatEnvCfg):
         self.terminations.recovery_stand_not_upright = DoneTerm(
             func=mdp.recovery_stand_timeout_not_upright,
             params={
-                "max_time_s": 5.0,
-                "min_upright_factor": 0.55,
+                "max_time_s": 2.0,
+                "min_upright_factor": 0.65,
                 "upright_threshold": -0.85,
                 "fallen_threshold": -0.35,
                 "asset_cfg": SceneEntityCfg("robot"),
@@ -288,12 +313,12 @@ class WLVMCRecoveryStandFlatEnvCfg(WLVMCRecoveryFlatEnvCfg):
         self.terminations.recovery_stand_not_standing = DoneTerm(
             func=mdp.recovery_stand_timeout_not_standing,
             params={
-                "max_time_s": 9.0,
-                "min_upright_factor": 0.75,
-                "min_height": 0.18,
+                "max_time_s": 5.0,
+                "min_upright_factor": 0.85,
+                "min_height": 0.185,
                 "target_total_force_n": 100.0,
                 "min_each_force_n": 35.0,
-                "min_load_score": 0.55,
+                "min_load_score": 0.65,
                 "upright_threshold": -0.85,
                 "fallen_threshold": -0.35,
                 "sensor_cfg": SceneEntityCfg(
