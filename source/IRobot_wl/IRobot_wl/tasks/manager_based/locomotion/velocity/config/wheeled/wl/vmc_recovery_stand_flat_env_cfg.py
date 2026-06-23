@@ -22,10 +22,14 @@ class WLVMCRecoveryStandFlatEnvCfg(WLVMCRecoveryFlatEnvCfg):
 
         # Allow a small amount of wheel authority for balance and in-place
         # correction. Keep this far below locomotion torque during this stage.
+        self.vmc_actions.action_scale_tp = 50.0
         self.vmc_actions.action_scale_wheel_torque = 0.75
         self.vmc_actions.clip_wheel_actions = 1.0
+        self.vmc_actions.torque_limits = [50.0, 50.0, 50.0, 50.0, 4.0, 4.0]
+        self.actions.vmc.action_scale_tp = self.vmc_actions.action_scale_tp
         self.actions.vmc.action_scale_wheel_torque = self.vmc_actions.action_scale_wheel_torque
         self.actions.vmc.clip_wheel_actions = self.vmc_actions.clip_wheel_actions
+        self.actions.vmc.torque_limits = self.vmc_actions.torque_limits
 
         # Let the stand-up policy learn the full support force instead of
         # inheriting a standing-force bias from the recovery parent task.
@@ -133,8 +137,19 @@ class WLVMCRecoveryStandFlatEnvCfg(WLVMCRecoveryFlatEnvCfg):
         )
         self.rewards.recovery_stand_theta0 = RewTerm(
             func=mdp.recovery_stand_theta0_l2,
-            weight=-30.0,
+            weight=-45.0,
             params={
+                "upright_threshold": -0.85,
+                "fallen_threshold": -0.35,
+                "leg_joint_names": self.leg_joint_names,
+                "asset_cfg": SceneEntityCfg("robot"),
+            },
+        )
+        self.rewards.recovery_stand_theta0_ready_exp = RewTerm(
+            func=mdp.recovery_stand_theta0_ready_exp,
+            weight=2.0,
+            params={
+                "std": 0.35,
                 "upright_threshold": -0.85,
                 "fallen_threshold": -0.35,
                 "leg_joint_names": self.leg_joint_names,
@@ -143,7 +158,7 @@ class WLVMCRecoveryStandFlatEnvCfg(WLVMCRecoveryFlatEnvCfg):
         )
         self.rewards.recovery_stand_theta0_exp = RewTerm(
             func=mdp.recovery_stand_theta0_exp,
-            weight=3.0,
+            weight=6.0,
             params={
                 "std": 0.45,
                 "upright_threshold": -0.85,
@@ -154,8 +169,20 @@ class WLVMCRecoveryStandFlatEnvCfg(WLVMCRecoveryFlatEnvCfg):
         )
         self.rewards.recovery_stand_theta0_worst = RewTerm(
             func=mdp.recovery_stand_theta0_worst_l2,
-            weight=-8.0,
+            weight=-15.0,
             params={
+                "upright_threshold": -0.85,
+                "fallen_threshold": -0.35,
+                "leg_joint_names": self.leg_joint_names,
+                "asset_cfg": SceneEntityCfg("robot"),
+            },
+        )
+        self.rewards.recovery_stand_splayed_long_leg = RewTerm(
+            func=mdp.recovery_stand_splayed_long_leg_l2,
+            weight=-20.0,
+            params={
+                "theta0_threshold": 0.8,
+                "leg_length_threshold": self.low_stand_leg_length,
                 "upright_threshold": -0.85,
                 "fallen_threshold": -0.35,
                 "leg_joint_names": self.leg_joint_names,
@@ -169,7 +196,9 @@ class WLVMCRecoveryStandFlatEnvCfg(WLVMCRecoveryFlatEnvCfg):
                 "target_height": self.low_stand_base_height,
                 "upright_threshold": -0.85,
                 "fallen_threshold": -0.35,
-                "gate_by_theta0": False,
+                "gate_by_theta0": True,
+                "theta0_ready_std": 0.35,
+                "leg_joint_names": self.leg_joint_names,
                 "asset_cfg": SceneEntityCfg("robot"),
             },
         )

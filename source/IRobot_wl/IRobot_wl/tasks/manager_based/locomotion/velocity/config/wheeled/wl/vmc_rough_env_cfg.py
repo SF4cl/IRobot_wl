@@ -169,7 +169,7 @@ class WLVMCControlActionsCfg:
         clip_force_actions=1.0,
         clip_wheel_actions=1.0,
         # Full articulation joint order is [lf0, rf0, lf1, rf1, l_wheel, r_wheel].
-        torque_limits=[30.0, 30.0, 30.0, 30.0, 4.0, 4.0],
+        torque_limits=[50.0, 50.0, 50.0, 50.0, 4.0, 4.0],
         randomize_action_delay=True,
         action_delay_ms_range=(0.0, 10.0),
     )

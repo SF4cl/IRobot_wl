@@ -498,7 +498,7 @@ class WLVMCActionCfg(ActionTermCfg):
     clip_force_actions: float = 1.0
     clip_wheel_actions: float = 3.0
     # Full articulation joint order is [lf0, rf0, lf1, rf1, l_wheel, r_wheel].
-    torque_limits: list[float] = [30.0, 30.0, 30.0, 30.0, 4.0, 4.0]
+    torque_limits: list[float] = [50.0, 50.0, 50.0, 50.0, 4.0, 4.0]
 
     # Domain randomization
     randomize_vmc_gains: bool = False

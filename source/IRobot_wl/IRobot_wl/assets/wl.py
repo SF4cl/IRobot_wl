@@ -46,8 +46,8 @@ WL_CFG = ArticulationCfg(
     actuators={
         "hip": DCMotorCfg(
             joint_names_expr=["lf0_Joint", "rf0_Joint"],
-            effort_limit=30.0,
-            saturation_effort=30.0,
+            effort_limit=50.0,
+            saturation_effort=50.0,
             velocity_limit=30.0,
             stiffness=0.0,
             damping=0.0,
@@ -55,8 +55,8 @@ WL_CFG = ArticulationCfg(
         ),
         "knee": DCMotorCfg(
             joint_names_expr=["lf1_Joint", "rf1_Joint"],
-            effort_limit=30.0,
-            saturation_effort=30.0,
+            effort_limit=50.0,
+            saturation_effort=50.0,
             velocity_limit=30.0,
             stiffness=0.0,
             damping=0.0,
