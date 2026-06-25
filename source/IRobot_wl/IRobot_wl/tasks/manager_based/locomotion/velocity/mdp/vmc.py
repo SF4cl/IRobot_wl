@@ -48,7 +48,7 @@ def forward_kinematics(
     end_x = offset + l1 * torch.cos(theta1) + l2 * torch.cos(theta1 + theta2)
     end_y = l1 * torch.sin(theta1) + l2 * torch.sin(theta1 + theta2)
     L0 = torch.sqrt(end_x**2 + end_y**2)
-    theta0 = torch.arctan2(end_y, end_x) - torch.pi / 2
+    theta0 = wrap_to_pi(torch.arctan2(end_y, end_x) - torch.pi / 2)
     return L0, theta0
 
 
@@ -413,9 +413,15 @@ class WLVMCAction(ActionTerm):
         self._previous_actions[:] = self._processed_actions
         self._raw_actions[:] = actions
         self._processed_actions[:] = self._raw_actions
-        self._processed_actions[:, [0, 3]].clamp_(-self.cfg.clip_tp_actions, self.cfg.clip_tp_actions)
-        self._processed_actions[:, [1, 4]].clamp_(-self.cfg.clip_force_actions, self.cfg.clip_force_actions)
-        self._processed_actions[:, [2, 5]].clamp_(-self.cfg.clip_wheel_actions, self.cfg.clip_wheel_actions)
+        self._processed_actions[:, [0, 3]] = self._processed_actions[:, [0, 3]].clamp(
+            -self.cfg.clip_tp_actions, self.cfg.clip_tp_actions
+        )
+        self._processed_actions[:, [1, 4]] = self._processed_actions[:, [1, 4]].clamp(
+            -self.cfg.clip_force_actions, self.cfg.clip_force_actions
+        )
+        self._processed_actions[:, [2, 5]] = self._processed_actions[:, [2, 5]].clamp(
+            -self.cfg.clip_wheel_actions, self.cfg.clip_wheel_actions
+        )
 
     def apply_actions(self):
         self._action_fifo[:, 1:, :] = self._action_fifo[:, :-1, :].clone()

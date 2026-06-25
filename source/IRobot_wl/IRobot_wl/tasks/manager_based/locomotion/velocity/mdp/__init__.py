@@ -14,5 +14,6 @@ from .curriculums import *  # noqa: F401, F403
 from .events import *  # noqa: F401, F403
 from .observations import *  # noqa: F401, F403
 from .rewards import *  # noqa: F401, F403
+from .terminations import *  # noqa: F401, F403
 from .utils import *  # noqa: F401, F403
 from .vmc import *  # noqa: F401, F403

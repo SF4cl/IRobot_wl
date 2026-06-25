@@ -8,7 +8,7 @@ from . import agents
 
 gym.register(
     id="IRobot-WL-Velocity-VMC-Flat-v0",
-    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    entry_point=f"{__name__}.flat_env:WLVMCFlatEnv",
     disable_env_checker=True,
     kwargs={
         "env_cfg_entry_point": f"{__name__}.vmc_flat_env_cfg:WLVMCVanillaFlatEnvCfg",
@@ -45,5 +45,15 @@ gym.register(
     kwargs={
         "env_cfg_entry_point": f"{__name__}.vmc_recovery_stand_flat_env_cfg:WLVMCRecoveryStandFlatEnvCfg",
         "rsl_rl_cfg_entry_point": f"{agents.__name__}.vmc_rsl_rl_ppo_cfg:WLVMCRecoveryStandFlatPPORunnerCfg",
+    },
+)
+
+gym.register(
+    id="IRobot-WL-Stand-VMC-Flat-v0",
+    entry_point="isaaclab.envs:ManagerBasedRLEnv",
+    disable_env_checker=True,
+    kwargs={
+        "env_cfg_entry_point": f"{__name__}.vmc_stand_flat_env_cfg:WLVMCStandFlatEnvCfg",
+        "rsl_rl_cfg_entry_point": f"{agents.__name__}.vmc_rsl_rl_ppo_cfg:WLVMCStandFlatPPORunnerCfg",
     },
 )

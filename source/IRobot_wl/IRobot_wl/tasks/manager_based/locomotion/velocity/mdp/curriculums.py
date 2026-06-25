@@ -15,6 +15,45 @@ if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
 
 
+def _completed_episode_score(
+    env: ManagerBasedRLEnv,
+    env_ids: Sequence[int],
+    reward_term_name: str,
+    update_interval: int,
+    state_prefix: str,
+) -> torch.Tensor | None:
+    """Average completed-episode reward rate when the update interval elapses."""
+    sum_name = f"_{state_prefix}_score_sum"
+    count_name = f"_{state_prefix}_score_count"
+    step_name = f"_{state_prefix}_last_update_step"
+
+    if not hasattr(env, sum_name):
+        setattr(env, sum_name, torch.zeros((), device=env.device))
+        setattr(env, count_name, 0)
+        setattr(env, step_name, env.common_step_counter)
+
+    if env.common_step_counter > 0:
+        episode_steps = env.episode_length_buf[env_ids].clamp_min(1)
+        observed_steps = torch.minimum(
+            episode_steps,
+            torch.full_like(episode_steps, env.common_step_counter),
+        )
+        episode_time = observed_steps * env.step_dt
+        episode_sums = env.reward_manager._episode_sums[reward_term_name][env_ids]
+        setattr(env, sum_name, getattr(env, sum_name) + torch.sum(episode_sums / episode_time))
+        setattr(env, count_name, getattr(env, count_name) + episode_sums.numel())
+
+    elapsed_steps = env.common_step_counter - getattr(env, step_name)
+    if elapsed_steps < update_interval or getattr(env, count_name) == 0:
+        return None
+
+    score = getattr(env, sum_name) / getattr(env, count_name)
+    getattr(env, sum_name).zero_()
+    setattr(env, count_name, 0)
+    setattr(env, step_name, env.common_step_counter)
+    return score
+
+
 def command_levels_lin_vel(
     env: ManagerBasedRLEnv,
     env_ids: Sequence[int],
@@ -45,15 +84,20 @@ def command_levels_lin_vel(
     if update_interval_s is not None:
         update_interval = max(1, int(round(update_interval_s / env.step_dt)))
 
-    # avoid updating command curriculum at each step since the maximum command is common to all envs
-    if env.common_step_counter > 0 and env.common_step_counter % update_interval == 0:
-        episode_sums = env.reward_manager._episode_sums[reward_term_name]
+    score = _completed_episode_score(
+        env,
+        env_ids,
+        reward_term_name,
+        update_interval,
+        state_prefix="lin_vel_curriculum",
+    )
+    if score is not None:
         reward_term_cfg = env.reward_manager.get_term_cfg(reward_term_name)
         vel_x = torch.tensor(base_velocity_ranges.lin_vel_x, device=env.device)
         vel_y = torch.tensor(base_velocity_ranges.lin_vel_y, device=env.device)
 
         # If the tracking reward is above the configured threshold, increase the command range.
-        if torch.mean(episode_sums[env_ids]) / env.max_episode_length_s > threshold * reward_term_cfg.weight:
+        if score > threshold * reward_term_cfg.weight:
             new_vel_x = vel_x + torch.sign(env._final_vel_x - vel_x) * step_size
             new_vel_y = vel_y + torch.sign(env._final_vel_y - vel_y) * step_size
 
@@ -93,14 +137,19 @@ def command_levels_ang_vel(
     if update_interval_s is not None:
         update_interval = max(1, int(round(update_interval_s / env.step_dt)))
 
-    # avoid updating command curriculum at each step since the maximum command is common to all envs
-    if env.common_step_counter > 0 and env.common_step_counter % update_interval == 0:
-        episode_sums = env.reward_manager._episode_sums[reward_term_name]
+    score = _completed_episode_score(
+        env,
+        env_ids,
+        reward_term_name,
+        update_interval,
+        state_prefix="ang_vel_curriculum",
+    )
+    if score is not None:
         reward_term_cfg = env.reward_manager.get_term_cfg(reward_term_name)
         ang_vel_z = torch.tensor(base_velocity_ranges.ang_vel_z, device=env.device)
 
         # If the tracking reward is above the configured threshold, increase the command range.
-        if torch.mean(episode_sums[env_ids]) / env.max_episode_length_s > threshold * reward_term_cfg.weight:
+        if score > threshold * reward_term_cfg.weight:
             new_ang_vel_z = ang_vel_z + torch.sign(env._final_ang_vel_z - ang_vel_z) * step_size
 
             # Clamp to ensure we don't exceed final ranges

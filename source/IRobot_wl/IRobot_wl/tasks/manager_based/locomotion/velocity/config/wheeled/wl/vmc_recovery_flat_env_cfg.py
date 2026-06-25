@@ -44,7 +44,7 @@ class WLVMCRecoveryFlatEnvCfg(WLVMCVanillaFlatEnvCfg):
         # extreme velocities, eventually corrupting the simulation with NaNs.
         self.vmc_actions.l0_offset = 0.13
         self.vmc_actions.feedforward_force = 0.0
-        self.vmc_actions.action_scale_tp = 10.0
+        self.vmc_actions.action_scale_tp = 15.0
         self.vmc_actions.action_scale_force = 25.0
         self.vmc_actions.action_scale_wheel_torque = 0.0
         self.vmc_actions.clip_tp_actions = 1.0
@@ -121,15 +121,39 @@ class WLVMCRecoveryFlatEnvCfg(WLVMCVanillaFlatEnvCfg):
             weight=-0.03,
             params={"asset_cfg": SceneEntityCfg("robot")},
         )
+        self.rewards.lin_vel_xy_l2 = RewTerm(
+            func=mdp.self_right_lin_vel_xy_l2,
+            weight=-0.05,
+            params={"asset_cfg": SceneEntityCfg("robot")},
+        )
         self.rewards.ang_vel_xy_l2 = RewTerm(
             func=mdp.self_right_ang_vel_xy_l2,
             weight=-0.08,
             params={"asset_cfg": SceneEntityCfg("robot")},
         )
+        self.rewards.self_right_upright_bonus = RewTerm(
+            func=mdp.self_right_upright_bonus,
+            weight=2.0,
+            params={
+                "ang_vel_std": 0.8,
+                "start_upright": 0.75,
+                "full_upright": 0.9,
+                "asset_cfg": SceneEntityCfg("robot"),
+            },
+        )
         self.rewards.joint_vel_l2 = RewTerm(
             func=mdp.joint_vel_l2,
             weight=-0.002,
             params={"asset_cfg": SceneEntityCfg("robot", joint_names=self.leg_joint_names)},
+        )
+        self.rewards.upright_joint_vel_l2 = RewTerm(
+            func=mdp.self_right_upright_joint_vel_l2,
+            weight=-0.01,
+            params={
+                "start_upright": 0.75,
+                "full_upright": 0.9,
+                "asset_cfg": SceneEntityCfg("robot", joint_names=self.leg_joint_names),
+            },
         )
         self.rewards.joint_torques_l2 = RewTerm(
             func=mdp.joint_torques_l2,
@@ -137,6 +161,15 @@ class WLVMCRecoveryFlatEnvCfg(WLVMCVanillaFlatEnvCfg):
             params={"asset_cfg": SceneEntityCfg("robot", joint_names=self.leg_joint_names)},
         )
         self.rewards.action_rate_l2 = RewTerm(func=mdp.action_rate_l2, weight=-0.01)
+        self.rewards.upright_action_rate_l2 = RewTerm(
+            func=mdp.self_right_upright_action_rate_l2,
+            weight=-0.03,
+            params={
+                "start_upright": 0.75,
+                "full_upright": 0.9,
+                "asset_cfg": SceneEntityCfg("robot"),
+            },
+        )
 
         # ------------------------------Terminations------------------------------
         self.terminations.illegal_contact = None

@@ -47,8 +47,12 @@ class WLVMCVanillaFlatPPORunnerCfg(WLVMCVanillaRoughPPORunnerCfg):
     def __post_init__(self):
         super().__post_init__()
 
+        # 96 steps at 200 Hz preserves the reference rollout horizon of about 0.48 s.
+        self.num_steps_per_env = 96
         self.max_iterations = 5000
         self.experiment_name = "wl_vmc_flat"
+        self.algorithm.entropy_coef = 0.005
+        self.algorithm.min_noise_std = 0.12
 
 
 @configclass
@@ -74,6 +78,20 @@ class WLVMCRecoveryStandFlatPPORunnerCfg(WLVMCVanillaRoughPPORunnerCfg):
         self.max_iterations = 3000
         self.save_interval = 100
         self.experiment_name = "wl_vmc_recovery_stand_flat"
+        self.policy.init_noise_std = 0.22
+        self.algorithm.entropy_coef = 0.002
+        self.algorithm.desired_kl = 0.003
+
+
+@configclass
+class WLVMCStandFlatPPORunnerCfg(WLVMCVanillaRoughPPORunnerCfg):
+    def __post_init__(self):
+        super().__post_init__()
+
+        self.num_steps_per_env = 48
+        self.max_iterations = 3000
+        self.save_interval = 100
+        self.experiment_name = "wl_vmc_stand_flat"
         self.policy.init_noise_std = 0.22
         self.algorithm.entropy_coef = 0.002
         self.algorithm.desired_kl = 0.003

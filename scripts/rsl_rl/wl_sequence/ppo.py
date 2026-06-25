@@ -29,6 +29,7 @@ class PPO:
         use_clipped_value_loss=True,
         schedule="fixed",
         desired_kl=0.01,
+        min_noise_std=1.0e-3,
         device="cpu",
     ):
         self.device = device
@@ -57,6 +58,7 @@ class PPO:
         self.desired_kl = desired_kl
         self.schedule = schedule
         self.learning_rate = learning_rate
+        self.min_noise_std = min_noise_std
 
     def init_storage(
         self,
@@ -192,7 +194,7 @@ class PPO:
                 self.optimizer.zero_grad()
                 continue
             self.optimizer.step()
-            self.actor_critic.std.data.clamp_(1.0e-3, 5.0)
+            self.actor_critic.std.data.clamp_(self.min_noise_std, 5.0)
 
             mean_value_loss += value_loss.item()
             mean_surrogate_loss += surrogate_loss.item()

@@ -176,6 +176,36 @@ class MixedModeVelocityCommandCfg(UniformThresholdVelocityCommandCfg):
     base_height_range: tuple[float, float] = (0.19, 0.32)
 
 
+class ContinuousHeightVelocityCommand(mdp.UniformVelocityCommand):
+    """Continuous velocity/heading command with an independent height target."""
+
+    def __init__(self, cfg: "ContinuousHeightVelocityCommandCfg", env: ManagerBasedEnv):
+        super().__init__(cfg, env)
+        height_range = getattr(cfg, "base_height_range", (0.19, 0.28))
+        self.base_height_command_b = torch.full(
+            (self.num_envs,),
+            0.5 * (height_range[0] + height_range[1]),
+            device=self.device,
+        )
+
+    def _resample_command(self, env_ids: Sequence[int]):
+        super()._resample_command(env_ids)
+        count = len(env_ids)
+        if count == 0:
+            return
+        self.base_height_command_b[env_ids] = torch.empty(count, device=self.device).uniform_(
+            *getattr(self.cfg, "base_height_range", (0.19, 0.28))
+        )
+
+
+@configclass
+class ContinuousHeightVelocityCommandCfg(UniformThresholdVelocityCommandCfg):
+    """Configuration for continuous reference-style flat commands."""
+
+    class_type: type = ContinuousHeightVelocityCommand
+    base_height_range: tuple[float, float] = (0.19, 0.28)
+
+
 class DiscreteCommandController(CommandTerm):
     """
     Command generator that assigns discrete commands to environments.

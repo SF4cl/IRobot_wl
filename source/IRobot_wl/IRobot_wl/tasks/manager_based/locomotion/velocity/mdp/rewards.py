@@ -16,6 +16,68 @@ if TYPE_CHECKING:
     from isaaclab.envs import ManagerBasedRLEnv
 
 
+def ref_track_lin_vel_exp(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    tracking_sigma: float = 0.25,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Wheel-Legged-Gym linear x velocity tracking reward."""
+    asset: RigidObject = env.scene[asset_cfg.name]
+    error = torch.square(env.command_manager.get_command(command_name)[:, 0] - asset.data.root_lin_vel_b[:, 0])
+    return torch.exp(-error / tracking_sigma)
+
+
+def ref_track_lin_vel_enhance(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    tracking_sigma: float = 0.25,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Wheel-Legged-Gym broad linear x tracking shaping term."""
+    asset: RigidObject = env.scene[asset_cfg.name]
+    error = torch.square(env.command_manager.get_command(command_name)[:, 0] - asset.data.root_lin_vel_b[:, 0])
+    return torch.exp(-error / tracking_sigma / 10.0) - 1.0
+
+
+def ref_track_ang_vel_exp(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    tracking_sigma: float = 0.25,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Wheel-Legged-Gym yaw velocity tracking reward."""
+    asset: RigidObject = env.scene[asset_cfg.name]
+    error = torch.square(env.command_manager.get_command(command_name)[:, 2] - asset.data.root_ang_vel_b[:, 2])
+    return torch.exp(-error / tracking_sigma)
+
+
+def ref_command_base_height_exp(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    fallback_target_height: float = 0.235,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Wheel-Legged-Gym positive exponential base-height reward."""
+    command_term = env.command_manager.get_term(command_name)
+    target = getattr(command_term, "base_height_command_b", None)
+    if target is None:
+        target = torch.full((env.num_envs,), fallback_target_height, device=env.device)
+    asset: RigidObject = env.scene[asset_cfg.name]
+    error = torch.square(asset.data.root_pos_w[:, 2] - target)
+    return torch.exp(-error / 0.001)
+
+
+def vmc_action_smooth_l2(env: ManagerBasedRLEnv, action_name: str = "vmc") -> torch.Tensor:
+    """Reference second-difference penalty on the four leg action channels."""
+    action_term = env.action_manager.get_term(action_name)
+    actions = getattr(action_term, "processed_actions", action_term.raw_actions)
+    previous = action_term.previous_actions
+    previous_previous = action_term.previous_previous_actions
+    leg_ids = [0, 1, 3, 4]
+    return torch.sum(torch.square(actions[:, leg_ids] - 2.0 * previous[:, leg_ids] + previous_previous[:, leg_ids]), dim=1)
+
+
 def track_lin_vel_xy_exp(
     env: ManagerBasedRLEnv, std: float, command_name: str, asset_cfg: SceneEntityCfg = SceneEntityCfg("robot")
 ) -> torch.Tensor:
@@ -721,6 +783,15 @@ def self_right_lin_vel_z_l2(
     return torch.square(asset.data.root_lin_vel_b[:, 2])
 
 
+def self_right_lin_vel_xy_l2(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Ungated horizontal base velocity penalty for in-place recovery."""
+    asset: RigidObject = env.scene[asset_cfg.name]
+    return torch.sum(torch.square(asset.data.root_lin_vel_b[:, :2]), dim=1)
+
+
 def self_right_ang_vel_xy_l2(
     env: ManagerBasedRLEnv,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
@@ -728,6 +799,55 @@ def self_right_ang_vel_xy_l2(
     """Ungated roll/pitch angular velocity penalty for recovery tasks."""
     asset: RigidObject = env.scene[asset_cfg.name]
     return torch.sum(torch.square(asset.data.root_ang_vel_b[:, :2]), dim=1)
+
+
+def self_right_upright_gate(
+    env: ManagerBasedRLEnv,
+    start_upright: float = 0.75,
+    full_upright: float = 0.9,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Smooth gate that turns on only after the body is nearly upright."""
+    asset: RigidObject = env.scene[asset_cfg.name]
+    upright = torch.clamp(-asset.data.projected_gravity_b[:, 2], min=0.0, max=1.0)
+    return torch.clamp((upright - start_upright) / max(full_upright - start_upright, 1.0e-6), min=0.0, max=1.0)
+
+
+def self_right_upright_bonus(
+    env: ManagerBasedRLEnv,
+    ang_vel_std: float = 0.8,
+    start_upright: float = 0.75,
+    full_upright: float = 0.9,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Reward staying upright with low roll/pitch angular velocity after recovery."""
+    asset: RigidObject = env.scene[asset_cfg.name]
+    gate = self_right_upright_gate(env, start_upright, full_upright, asset_cfg)
+    ang_vel_xy_l2 = torch.sum(torch.square(asset.data.root_ang_vel_b[:, :2]), dim=1)
+    return gate * torch.exp(-ang_vel_xy_l2 / max(ang_vel_std**2, 1.0e-6))
+
+
+def self_right_upright_joint_vel_l2(
+    env: ManagerBasedRLEnv,
+    start_upright: float = 0.75,
+    full_upright: float = 0.9,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Penalize leg motion after the body has recovered upright."""
+    asset: Articulation = env.scene[asset_cfg.name]
+    gate = self_right_upright_gate(env, start_upright, full_upright, asset_cfg)
+    return gate * torch.sum(torch.square(asset.data.joint_vel[:, asset_cfg.joint_ids]), dim=1)
+
+
+def self_right_upright_action_rate_l2(
+    env: ManagerBasedRLEnv,
+    start_upright: float = 0.75,
+    full_upright: float = 0.9,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Penalize action changes only after the body is upright."""
+    gate = self_right_upright_gate(env, start_upright, full_upright, asset_cfg)
+    return gate * torch.sum(torch.square(env.action_manager.action - env.action_manager.prev_action), dim=1)
 
 
 def self_right_body_lin_acc_l2(

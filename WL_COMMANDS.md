@@ -366,7 +366,7 @@ rsync -avP -e "ssh -p 37023" \
 Windows PowerShell 示例：
 
 ```powershell
-scp -r -P 37023 root@connect.westc.seetacloud.com:/root/autodl-tmp/wl_workspace/IRobot_wl/logs/rsl_rl/wl_vmc_recovery_stand_flat/2026-06-23_09-17-19 D:\rm\2026_code\rl\IRobot_wl\logs\rsl_rl\wl_vmc_recovery_stand_flat
+scp -r -P 37023 root@connect.westc.seetacloud.com:/root/autodl-tmp/wl_workspace/IRobot_wl/logs/rsl_rl/wl_vmc_recovery_stand_flat/2026-06-23_14-12-50 D:\rm\2026_code\rl\IRobot_wl\logs\rsl_rl\wl_vmc_recovery_stand_flat
 ```
 
 ## 15. 推荐使用顺序

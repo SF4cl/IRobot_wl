@@ -97,6 +97,7 @@ class WlSequenceRunner:
             "use_clipped_value_loss",
             "schedule",
             "desired_kl",
+            "min_noise_std",
         }
         return {key: value for key, value in algo_cfg.items() if key in allowed_keys}
 
@@ -749,6 +750,7 @@ class WlSequenceRunner:
     def load(self, path, load_optimizer=True):
         loaded_dict = torch.load(path, map_location=self.device, weights_only=False)
         self.alg.actor_critic.load_state_dict(loaded_dict["model_state_dict"])
+        self.alg.actor_critic.std.data.clamp_(self.alg.min_noise_std, 5.0)
         if load_optimizer and "optimizer_state_dict" in loaded_dict:
             self.alg.optimizer.load_state_dict(loaded_dict["optimizer_state_dict"])
         if load_optimizer and "extra_optimizer_state_dict" in loaded_dict:
