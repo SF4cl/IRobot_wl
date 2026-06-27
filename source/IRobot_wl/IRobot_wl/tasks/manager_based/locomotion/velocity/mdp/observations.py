@@ -54,7 +54,7 @@ def leg_angle(
         return torch.zeros(env.num_envs, 2, device=env.device)
 
     # Get joint positions for leg joints
-    joint_indices = asset.find_joints(leg_joint_names)[0]
+    joint_indices = asset.find_joints(leg_joint_names, preserve_order=True)[0]
     dof_pos = asset.data.joint_pos[:, joint_indices]
 
     # Build theta1 and theta2 per leg
@@ -83,8 +83,8 @@ def leg_angle_dot(
     if leg_joint_names is None or wheel_joint_names is None:
         return torch.zeros(env.num_envs, 2, device=env.device)
 
-    leg_joint_indices = asset.find_joints(leg_joint_names)[0]
-    wheel_joint_indices = asset.find_joints(wheel_joint_names)[0]
+    leg_joint_indices = asset.find_joints(leg_joint_names, preserve_order=True)[0]
+    wheel_joint_indices = asset.find_joints(wheel_joint_names, preserve_order=True)[0]
     state = compute_vmc_state(
         asset.data.joint_pos,
         asset.data.joint_vel,
@@ -128,7 +128,7 @@ def leg_length(
     if leg_joint_names is None:
         return torch.zeros(env.num_envs, 2, device=env.device)
 
-    joint_indices = asset.find_joints(leg_joint_names)[0]
+    joint_indices = asset.find_joints(leg_joint_names, preserve_order=True)[0]
     dof_pos = asset.data.joint_pos[:, joint_indices]
 
     theta1 = torch.stack([dof_pos[:, 0] + theta1_offset, -dof_pos[:, 2] + theta1_offset], dim=1)
@@ -156,8 +156,8 @@ def leg_length_dot(
     if leg_joint_names is None or wheel_joint_names is None:
         return torch.zeros(env.num_envs, 2, device=env.device)
 
-    leg_joint_indices = asset.find_joints(leg_joint_names)[0]
-    wheel_joint_indices = asset.find_joints(wheel_joint_names)[0]
+    leg_joint_indices = asset.find_joints(leg_joint_names, preserve_order=True)[0]
+    wheel_joint_indices = asset.find_joints(wheel_joint_names, preserve_order=True)[0]
     state = compute_vmc_state(
         asset.data.joint_pos,
         asset.data.joint_vel,

@@ -903,7 +903,7 @@ def nominal_state(
     if leg_joint_names is None:
         return torch.zeros(env.num_envs, device=env.device)
 
-    joint_indices = asset.find_joints(leg_joint_names)[0]
+    joint_indices = asset.find_joints(leg_joint_names, preserve_order=True)[0]
     dof_pos = asset.data.joint_pos[:, joint_indices]
 
     theta1 = torch.stack([dof_pos[:, 0] + theta1_offset, -dof_pos[:, 2] + theta1_offset], dim=1)
@@ -935,7 +935,7 @@ def leg_length_symmetry(
     if leg_joint_names is None:
         return torch.zeros(env.num_envs, device=env.device)
 
-    joint_indices = asset.find_joints(leg_joint_names)[0]
+    joint_indices = asset.find_joints(leg_joint_names, preserve_order=True)[0]
     dof_pos = asset.data.joint_pos[:, joint_indices]
     theta1 = torch.stack([dof_pos[:, 0] + theta1_offset, -dof_pos[:, 2] + theta1_offset], dim=1)
     theta2 = torch.stack([dof_pos[:, 1] + theta2_offset, -dof_pos[:, 3] + theta2_offset], dim=1)
@@ -962,7 +962,7 @@ def leg_angle_symmetry(
     if leg_joint_names is None:
         return torch.zeros(env.num_envs, device=env.device)
 
-    joint_indices = asset.find_joints(leg_joint_names)[0]
+    joint_indices = asset.find_joints(leg_joint_names, preserve_order=True)[0]
     dof_pos = asset.data.joint_pos[:, joint_indices]
     theta1 = torch.stack([dof_pos[:, 0] + theta1_offset, -dof_pos[:, 2] + theta1_offset], dim=1)
     theta2 = torch.stack([dof_pos[:, 1] + theta2_offset, -dof_pos[:, 3] + theta2_offset], dim=1)
@@ -1007,7 +1007,7 @@ def theta0_nominal(
     if leg_joint_names is None:
         return torch.zeros(env.num_envs, device=env.device)
 
-    joint_indices = asset.find_joints(leg_joint_names)[0]
+    joint_indices = asset.find_joints(leg_joint_names, preserve_order=True)[0]
     dof_pos = asset.data.joint_pos[:, joint_indices]
     theta1 = torch.stack([dof_pos[:, 0] + theta1_offset, -dof_pos[:, 2] + theta1_offset], dim=1)
     theta2 = torch.stack([dof_pos[:, 1] + theta2_offset, -dof_pos[:, 3] + theta2_offset], dim=1)
@@ -1534,7 +1534,7 @@ def recovery_leg_extension(
     if leg_joint_names is None:
         return torch.zeros(env.num_envs, device=env.device)
 
-    joint_indices = asset.find_joints(leg_joint_names)[0]
+    joint_indices = asset.find_joints(leg_joint_names, preserve_order=True)[0]
     dof_pos = asset.data.joint_pos[:, joint_indices]
     theta1 = torch.stack([dof_pos[:, 0] + theta1_offset, -dof_pos[:, 2] + theta1_offset], dim=1)
     theta2 = torch.stack([dof_pos[:, 1] + theta2_offset, -dof_pos[:, 3] + theta2_offset], dim=1)
@@ -1577,7 +1577,7 @@ def recovery_leg_symmetry(
     if leg_joint_names is None:
         return torch.zeros(env.num_envs, device=env.device)
 
-    joint_indices = asset.find_joints(leg_joint_names)[0]
+    joint_indices = asset.find_joints(leg_joint_names, preserve_order=True)[0]
     dof_pos = asset.data.joint_pos[:, joint_indices]
     theta1 = torch.stack([dof_pos[:, 0] + theta1_offset, -dof_pos[:, 2] + theta1_offset], dim=1)
     theta2 = torch.stack([dof_pos[:, 1] + theta2_offset, -dof_pos[:, 3] + theta2_offset], dim=1)
@@ -1648,7 +1648,7 @@ def _recovery_stand_leg_state(
         return zeros, zeros
 
     asset: Articulation = env.scene[asset_cfg.name]
-    joint_indices = asset.find_joints(leg_joint_names)[0]
+    joint_indices = asset.find_joints(leg_joint_names, preserve_order=True)[0]
     dof_pos = asset.data.joint_pos[:, joint_indices]
     theta1 = torch.stack([dof_pos[:, 0] + theta1_offset, -dof_pos[:, 2] + theta1_offset], dim=1)
     theta2 = torch.stack([dof_pos[:, 1] + theta2_offset, -dof_pos[:, 3] + theta2_offset], dim=1)

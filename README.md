@@ -1,135 +1,114 @@
-# Template for Isaac Lab Projects
+# IRobot_wl
 
-## Overview
+`IRobot_wl` 是基于 Isaac Lab 的轮腿机器人训练工程。当前阶段先只维护平地和粗糙地形两个 VMC 速度跟踪任务，先把训练侧 observation、reward、action 和关节顺序完全理顺，再重新做 MuJoCo sim2sim。
 
-This project/repository serves as a template for building projects or extensions based on Isaac Lab.
-It allows you to develop in an isolated environment, outside of the core Isaac Lab repository.
+## 当前维护的任务
 
-**Key Features:**
+```text
+IRobot-WL-Velocity-VMC-Flat-v0
+IRobot-WL-Velocity-VMC-Rough-v0
+```
 
-- `Isolation` Work outside the core Isaac Lab repository, ensuring that your development efforts remain self-contained.
-- `Flexibility` This template is set up to allow your code to be run as an extension in Omniverse.
+之前实验过的 recovery、stand、getup 等任务已经从当前注册入口移除。后续如果要重新做倒地自起，建议在 flat/rough 的关节顺序和 sim2sim 链路稳定之后，再单独恢复。
 
-**Keywords:** extension, template, isaaclab
+## 关节顺序约定
 
-## Installation
+训练侧统一使用下面的标准顺序：
 
-- Install Isaac Lab by following the [installation guide](https://isaac-sim.github.io/IsaacLab/main/source/setup/installation/index.html).
-  We recommend using the conda or uv installation as it simplifies calling Python scripts from the terminal.
+```python
+leg_joint_names = ["lf0_Joint", "lf1_Joint", "rf0_Joint", "rf1_Joint"]
+wheel_joint_names = ["l_wheel_Joint", "r_wheel_Joint"]
+```
 
-- Clone or copy this project/repository separately from the Isaac Lab installation (i.e. outside the `IsaacLab` directory):
+凡是 VMC 几何、observation、reward、action 或诊断脚本里通过 `asset.find_joints(...)` 获取关节索引，都必须显式使用 `preserve_order=True`。不要依赖 articulation 内部顺序。
 
-- Using a python interpreter that has Isaac Lab installed, install the library in editable mode using:
+这点很关键：旧训练中 observation/reward 侧可能把 `[lf0, lf1, rf0, rf1]` 按 articulation 返回顺序错位解释，导致真实 `theta0/L0` 与 policy obs 里的腿角、腿长不一致。旧 checkpoint 因此不建议继续作为干净 sim2sim 的基准。
 
-    ```bash
-    # use 'PATH_TO_isaaclab.sh|bat -p' instead of 'python' if Isaac Lab is not installed in Python venv or conda
-    python -m pip install -e source/IRobot_wl
+## 安装
 
-- Verify that the extension is correctly installed by:
-
-    - Listing the available tasks:
-
-        Note: It the task name changes, it may be necessary to update the search pattern `"Template-"`
-        (in the `scripts/list_envs.py` file) so that it can be listed.
-
-        ```bash
-        # use 'FULL_PATH_TO_isaaclab.sh|bat -p' instead of 'python' if Isaac Lab is not installed in Python venv or conda
-        python scripts/list_envs.py
-        ```
-
-    - Running a task:
-
-        ```bash
-        # use 'FULL_PATH_TO_isaaclab.sh|bat -p' instead of 'python' if Isaac Lab is not installed in Python venv or conda
-        python scripts/<RL_LIBRARY>/train.py --task=<TASK_NAME>
-        ```
-
-    - Running a task with dummy agents:
-
-        These include dummy agents that output zero or random agents. They are useful to ensure that the environments are configured correctly.
-
-        - Zero-action agent
-
-            ```bash
-            # use 'FULL_PATH_TO_isaaclab.sh|bat -p' instead of 'python' if Isaac Lab is not installed in Python venv or conda
-            python scripts/zero_agent.py --task=<TASK_NAME>
-            ```
-        - Random-action agent
-
-            ```bash
-            # use 'FULL_PATH_TO_isaaclab.sh|bat -p' instead of 'python' if Isaac Lab is not installed in Python venv or conda
-            python scripts/random_agent.py --task=<TASK_NAME>
-            ```
-
-### Set up IDE (Optional)
-
-To setup the IDE, please follow these instructions:
-
-- Run VSCode Tasks, by pressing `Ctrl+Shift+P`, selecting `Tasks: Run Task` and running the `setup_python_env` in the drop down menu.
-  When running this task, you will be prompted to add the absolute path to your Isaac Sim installation.
-
-If everything executes correctly, it should create a file .python.env in the `.vscode` directory.
-The file contains the python paths to all the extensions provided by Isaac Sim and Omniverse.
-This helps in indexing all the python modules for intelligent suggestions while writing code.
-
-### Setup as Omniverse Extension (Optional)
-
-We provide an example UI extension that will load upon enabling your extension defined in `source/IRobot_wl/IRobot_wl/ui_extension_example.py`.
-
-To enable your extension, follow these steps:
-
-1. **Add the search path of this project/repository** to the extension manager:
-    - Navigate to the extension manager using `Window` -> `Extensions`.
-    - Click on the **Hamburger Icon**, then go to `Settings`.
-    - In the `Extension Search Paths`, enter the absolute path to the `source` directory of this project/repository.
-    - If not already present, in the `Extension Search Paths`, enter the path that leads to Isaac Lab's extension directory directory (`IsaacLab/source`)
-    - Click on the **Hamburger Icon**, then click `Refresh`.
-
-2. **Search and enable your extension**:
-    - Find your extension under the `Third Party` category.
-    - Toggle it to enable your extension.
-
-## Code formatting
-
-We have a pre-commit template to automatically format your code.
-To install pre-commit:
+默认工作目录：
 
 ```bash
-pip install pre-commit
+cd /home/sf4/Workspace/rm/rl_wheel_legged/IRobot_wl/IRobot_wl
 ```
 
-Then you can run pre-commit with:
+默认使用 Isaac Lab 训练环境：
 
 ```bash
-pre-commit run --all-files
+conda activate rl_wheel_legged
+pip install -e source/IRobot_wl
 ```
 
-## Troubleshooting
+如果没有激活 shell，也可以用 `conda run -n rl_wheel_legged ...` 执行下面的命令。
 
-### Pylance Missing Indexing of Extensions
+## 重新训练
 
-In some VsCode versions, the indexing of part of the extensions is missing.
-In this case, add the path to your extension in `.vscode/settings.json` under the key `"python.analysis.extraPaths"`.
+平地任务：
 
-```json
-{
-    "python.analysis.extraPaths": [
-        "<path-to-ext-repo>/source/IRobot_wl"
-    ]
-}
+```bash
+conda run -n rl_wheel_legged python scripts/rsl_rl/train.py \
+  --task IRobot-WL-Velocity-VMC-Flat-v0 \
+  --agent rsl_rl_cfg_entry_point \
+  --num_envs 4096 \
+  --max_iterations 5000 \
+  --headless
 ```
 
-### Pylance Crash
+粗糙地形任务：
 
-If you encounter a crash in `pylance`, it is probable that too many files are indexed and you run out of memory.
-A possible solution is to exclude some of omniverse packages that are not used in your project.
-To do so, modify `.vscode/settings.json` and comment out packages under the key `"python.analysis.extraPaths"`
-Some examples of packages that can likely be excluded are:
-
-```json
-"<path-to-isaac-sim>/extscache/omni.anim.*"         // Animation packages
-"<path-to-isaac-sim>/extscache/omni.kit.*"          // Kit UI tools
-"<path-to-isaac-sim>/extscache/omni.graph.*"        // Graph UI tools
-"<path-to-isaac-sim>/extscache/omni.services.*"     // Services tools
-...
+```bash
+conda run -n rl_wheel_legged python scripts/rsl_rl/train.py \
+  --task IRobot-WL-Velocity-VMC-Rough-v0 \
+  --agent rsl_rl_cfg_entry_point \
+  --num_envs 4096 \
+  --max_iterations 5000 \
+  --headless
 ```
+
+小规模 smoke test：
+
+```bash
+conda run -n rl_wheel_legged python scripts/rsl_rl/train.py \
+  --task IRobot-WL-Velocity-VMC-Flat-v0 \
+  --agent rsl_rl_cfg_entry_point \
+  --num_envs 512 \
+  --max_iterations 50 \
+  --headless
+```
+
+## Play 和诊断
+
+播放 flat 策略：
+
+```bash
+conda run -n rl_wheel_legged python scripts/rsl_rl/play.py \
+  --task IRobot-WL-Velocity-VMC-Flat-v0 \
+  --agent rsl_rl_cfg_entry_point
+```
+
+播放 rough 策略：
+
+```bash
+conda run -n rl_wheel_legged python scripts/rsl_rl/play.py \
+  --task IRobot-WL-Velocity-VMC-Rough-v0 \
+  --agent rsl_rl_cfg_entry_point
+```
+
+查看 TensorBoard：
+
+```bash
+tensorboard --logdir logs/rsl_rl --port 6006
+```
+
+## MuJoCo sim2sim 前检查
+
+新 checkpoint 用于 MuJoCo 前，建议先在 Isaac 侧导出 trace，对齐下面这些字段：
+
+- policy 当前帧 observation
+- policy history observation
+- raw action 和 clipped action
+- VMC 输出 torque
+- `theta0/L0`
+- base 姿态、速度和接触状态
+
+只有 Isaac trace 内部确认 `theta0/L0` 和 policy obs 一致之后，再把同一 checkpoint 接到 `sim2sim_mujoco_rebuild`。旧的 `wl_vmc_flat/2026-06-25_11-41-46/model_15600.pt` 可以作为历史诊断材料，但不建议作为重新开始后的正式 sim2sim 基准。

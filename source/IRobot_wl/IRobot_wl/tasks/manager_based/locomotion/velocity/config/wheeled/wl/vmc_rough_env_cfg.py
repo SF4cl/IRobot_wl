@@ -202,7 +202,9 @@ class WLVMCObsCfg(ObservationsCfg):
         leg_angle = ObsTerm(
             func=mdp.leg_angle,
             params={
-                "asset_cfg": SceneEntityCfg("robot", joint_names=["lf0_Joint", "lf1_Joint", "rf0_Joint", "rf1_Joint"]),
+                "asset_cfg": SceneEntityCfg(
+                    "robot", joint_names=["lf0_Joint", "lf1_Joint", "rf0_Joint", "rf1_Joint"], preserve_order=True
+                ),
                 "leg_joint_names": ["lf0_Joint", "lf1_Joint", "rf0_Joint", "rf1_Joint"],
                 "l1": 0.21665632675675972,
                 "l2": 0.2540023491164531,
@@ -217,7 +219,9 @@ class WLVMCObsCfg(ObservationsCfg):
         leg_angle_dot = ObsTerm(
             func=mdp.leg_angle_dot,
             params={
-                "asset_cfg": SceneEntityCfg("robot", joint_names=["lf0_Joint", "lf1_Joint", "rf0_Joint", "rf1_Joint"]),
+                "asset_cfg": SceneEntityCfg(
+                    "robot", joint_names=["lf0_Joint", "lf1_Joint", "rf0_Joint", "rf1_Joint"], preserve_order=True
+                ),
                 "leg_joint_names": ["lf0_Joint", "lf1_Joint", "rf0_Joint", "rf1_Joint"],
                 "wheel_joint_names": ["l_wheel_Joint", "r_wheel_Joint"],
                 "l1": 0.21665632675675972,
@@ -233,7 +237,9 @@ class WLVMCObsCfg(ObservationsCfg):
         leg_length = ObsTerm(
             func=mdp.leg_length,
             params={
-                "asset_cfg": SceneEntityCfg("robot", joint_names=["lf0_Joint", "lf1_Joint", "rf0_Joint", "rf1_Joint"]),
+                "asset_cfg": SceneEntityCfg(
+                    "robot", joint_names=["lf0_Joint", "lf1_Joint", "rf0_Joint", "rf1_Joint"], preserve_order=True
+                ),
                 "leg_joint_names": ["lf0_Joint", "lf1_Joint", "rf0_Joint", "rf1_Joint"],
                 "l1": 0.21665632675675972,
                 "l2": 0.2540023491164531,
@@ -248,7 +254,9 @@ class WLVMCObsCfg(ObservationsCfg):
         leg_length_dot = ObsTerm(
             func=mdp.leg_length_dot,
             params={
-                "asset_cfg": SceneEntityCfg("robot", joint_names=["lf0_Joint", "lf1_Joint", "rf0_Joint", "rf1_Joint"]),
+                "asset_cfg": SceneEntityCfg(
+                    "robot", joint_names=["lf0_Joint", "lf1_Joint", "rf0_Joint", "rf1_Joint"], preserve_order=True
+                ),
                 "leg_joint_names": ["lf0_Joint", "lf1_Joint", "rf0_Joint", "rf1_Joint"],
                 "wheel_joint_names": ["l_wheel_Joint", "r_wheel_Joint"],
                 "l1": 0.21665632675675972,
@@ -263,7 +271,7 @@ class WLVMCObsCfg(ObservationsCfg):
         )
         wheel_vel = ObsTerm(
             func=mdp.wheel_joint_vel,
-            params={"asset_cfg": SceneEntityCfg("robot", joint_names=["l_wheel_Joint", "r_wheel_Joint"])},
+            params={"asset_cfg": SceneEntityCfg("robot", joint_names=["l_wheel_Joint", "r_wheel_Joint"], preserve_order=True)},
             noise=Unoise(n_min=-1.5, n_max=1.5),
             clip=(-100.0, 100.0),
             scale=0.05,
@@ -295,7 +303,9 @@ class WLVMCObsCfg(ObservationsCfg):
         leg_angle = ObsTerm(
             func=mdp.leg_angle,
             params={
-                "asset_cfg": SceneEntityCfg("robot", joint_names=["lf0_Joint", "lf1_Joint", "rf0_Joint", "rf1_Joint"]),
+                "asset_cfg": SceneEntityCfg(
+                    "robot", joint_names=["lf0_Joint", "lf1_Joint", "rf0_Joint", "rf1_Joint"], preserve_order=True
+                ),
                 "leg_joint_names": ["lf0_Joint", "lf1_Joint", "rf0_Joint", "rf1_Joint"],
                 "l1": 0.21665632675675972,
                 "l2": 0.2540023491164531,
@@ -309,7 +319,9 @@ class WLVMCObsCfg(ObservationsCfg):
         leg_angle_dot = ObsTerm(
             func=mdp.leg_angle_dot,
             params={
-                "asset_cfg": SceneEntityCfg("robot", joint_names=["lf0_Joint", "lf1_Joint", "rf0_Joint", "rf1_Joint"]),
+                "asset_cfg": SceneEntityCfg(
+                    "robot", joint_names=["lf0_Joint", "lf1_Joint", "rf0_Joint", "rf1_Joint"], preserve_order=True
+                ),
                 "leg_joint_names": ["lf0_Joint", "lf1_Joint", "rf0_Joint", "rf1_Joint"],
                 "wheel_joint_names": ["l_wheel_Joint", "r_wheel_Joint"],
                 "l1": 0.21665632675675972,
@@ -324,7 +336,9 @@ class WLVMCObsCfg(ObservationsCfg):
         leg_length = ObsTerm(
             func=mdp.leg_length,
             params={
-                "asset_cfg": SceneEntityCfg("robot", joint_names=["lf0_Joint", "lf1_Joint", "rf0_Joint", "rf1_Joint"]),
+                "asset_cfg": SceneEntityCfg(
+                    "robot", joint_names=["lf0_Joint", "lf1_Joint", "rf0_Joint", "rf1_Joint"], preserve_order=True
+                ),
                 "leg_joint_names": ["lf0_Joint", "lf1_Joint", "rf0_Joint", "rf1_Joint"],
                 "l1": 0.21665632675675972,
                 "l2": 0.2540023491164531,
@@ -338,7 +352,9 @@ class WLVMCObsCfg(ObservationsCfg):
         leg_length_dot = ObsTerm(
             func=mdp.leg_length_dot,
             params={
-                "asset_cfg": SceneEntityCfg("robot", joint_names=["lf0_Joint", "lf1_Joint", "rf0_Joint", "rf1_Joint"]),
+                "asset_cfg": SceneEntityCfg(
+                    "robot", joint_names=["lf0_Joint", "lf1_Joint", "rf0_Joint", "rf1_Joint"], preserve_order=True
+                ),
                 "leg_joint_names": ["lf0_Joint", "lf1_Joint", "rf0_Joint", "rf1_Joint"],
                 "wheel_joint_names": ["l_wheel_Joint", "r_wheel_Joint"],
                 "l1": 0.21665632675675972,
@@ -352,7 +368,7 @@ class WLVMCObsCfg(ObservationsCfg):
         )
         wheel_vel = ObsTerm(
             func=mdp.wheel_joint_vel,
-            params={"asset_cfg": SceneEntityCfg("robot", joint_names=["l_wheel_Joint", "r_wheel_Joint"])},
+            params={"asset_cfg": SceneEntityCfg("robot", joint_names=["l_wheel_Joint", "r_wheel_Joint"], preserve_order=True)},
             clip=(-100.0, 100.0),
             scale=0.05,
         )
@@ -382,7 +398,9 @@ class WLVMCObsCfg(ObservationsCfg):
                     "robot",
                     joint_names=["lf0_Joint", "lf1_Joint", "rf0_Joint", "rf1_Joint", "l_wheel_Joint", "r_wheel_Joint"],
                 ),
-                "wheel_asset_cfg": SceneEntityCfg("robot", joint_names=["l_wheel_Joint", "r_wheel_Joint"]),
+                "wheel_asset_cfg": SceneEntityCfg(
+                    "robot", joint_names=["l_wheel_Joint", "r_wheel_Joint"], preserve_order=True
+                ),
             },
             clip=(-100.0, 100.0),
             scale=1.0,

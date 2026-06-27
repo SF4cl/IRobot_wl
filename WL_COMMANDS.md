@@ -1,235 +1,175 @@
 # WL Commands
 
-本文档记录 `IRobot_wl` 中 WL 任务常用命令。
+本文档记录 `IRobot_wl` 当前建议使用的 WL 训练、播放和诊断命令。
 
-默认工作目录：
+当前阶段只专注两个任务：
+
+```text
+IRobot-WL-Velocity-VMC-Flat-v0
+IRobot-WL-Velocity-VMC-Rough-v0
+```
+
+recovery、stand、getup 等旧实验任务已经从当前注册入口移除，暂时不要继续用旧 checkpoint 做 sim2sim 基准。
+
+## 1. 默认路径和环境
 
 ```bash
 cd /home/sf4/Workspace/rm/rl_wheel_legged/IRobot_wl/IRobot_wl
-```
-
-默认环境：
-
-```bash
 conda activate rl_wheel_legged
 ```
 
-## 1. 安装开发包
+未激活 shell 时，可以把命令写成：
 
-首次使用或代码结构有改动后，建议执行：
+```bash
+conda run -n rl_wheel_legged python scripts/rsl_rl/train.py ...
+```
+
+安装开发包：
 
 ```bash
 pip install -e source/IRobot_wl
 ```
 
-## 2. 任务名
+## 2. 关节顺序标准
 
-当前保留的 WL 任务名：
+VMC 相关代码统一使用：
 
-```bash
-IRobot-WL-Recovery-VMC-Flat-v0
-IRobot-WL-Recovery-Stand-VMC-Flat-v0
-IRobot-WL-Velocity-VMC-Flat-v0
-IRobot-WL-Velocity-VMC-Rough-v0
+```python
+leg_joint_names = ["lf0_Joint", "lf1_Joint", "rf0_Joint", "rf1_Joint"]
+wheel_joint_names = ["l_wheel_Joint", "r_wheel_Joint"]
 ```
 
-常用任务含义：
+所有 `asset.find_joints(...)` 只要用于 VMC 几何、observation、reward、action 或诊断，都必须显式加：
 
-```bash
-IRobot-WL-Recovery-VMC-Flat-v0   # 纯起身，从随机倒地姿态恢复 upright
-IRobot-WL-Recovery-Stand-VMC-Flat-v0  # 翻正后原地站起
-IRobot-WL-Velocity-VMC-Flat-v0   # 平地速度跟踪
-IRobot-WL-Velocity-VMC-Rough-v0  # 粗糙地形速度跟踪
+```python
+preserve_order=True
 ```
+
+不要依赖 Isaac articulation 的内部返回顺序。之前发现过真实 `theta0/L0` 是 `0/0.235`，但 policy obs 里的 leg angle/length 不一致的问题，这类现象很像关节顺序错位导致。
 
 ## 3. VMC 动作语义
 
-VMC policy 仍然输出 6 维 action，但腿部通道现在不再表示目标腿摆角 `theta0` 和目标腿长 `L0`，而是直接表示任务空间力/力矩：
+VMC policy 输出 6 维 action：
 
 ```text
 [Tp_l, deltaF_l, wheel_l, Tp_r, deltaF_r, wheel_r]
 ```
 
-- `Tp`：腿摆角方向的任务空间力矩，经过 `action_scale_tp` 缩放后通过 VMC 雅可比映射到髋/膝关节力矩。
-- `deltaF`：支撑腿轴向残差力，经过 `action_scale_force` 缩放。
-- 最终轴向支撑力为 `deltaF + feedforward_force`。也就是说 policy 输出 0 时，腿部仍有配置里的前馈支撑力。
-- `wheel`：轮速命令，语义保持不变。
-- 旧的 target-PD 配置字段仍保留，主要用于兼容旧配置；当前腿部 action 路径不再用 policy action 生成目标腿角或目标腿长。
+- `Tp_l/Tp_r`: 左右腿摆角方向任务空间力矩。
+- `deltaF_l/deltaF_r`: 左右腿轴向残差支撑力。
+- `wheel_l/wheel_r`: 左右轮控制输出。
+- 腿部 `Tp/deltaF` 会经过 action scale，再通过 VMC 雅可比映射为髋/膝关节 torque。
+- policy 输出 0 时，腿部仍可能通过配置里的 feedforward force 获得基础支撑力。
 
-注意：`IRobot-WL-Recovery-VMC-Flat-v0` 是纯起身任务，虽然仍保留 6 维 action 接口，但训练时 wheel torque scale 和 wheel action clip 都设为 0，实际只使用腿部 `Tp/deltaF` 起身。
+## 4. 训练命令
 
-`IRobot-WL-Recovery-Stand-VMC-Flat-v0` 会小幅打开 wheel torque，用于翻正后原地站稳；这个阶段仍不是行走任务。
-
-## 4. 开始训练
-
-纯起身 Recovery Flat 训练：
+Flat 正式训练：
 
 ```bash
-python scripts/rsl_rl/train.py \
-  --task IRobot-WL-Recovery-VMC-Flat-v0 \
-  --agent rsl_rl_cfg_entry_point \
-  --headless
-```
-
-翻正后原地站起 Recovery Stand 训练：
-
-```bash
-python scripts/rsl_rl/train.py \
-  --task IRobot-WL-Recovery-Stand-VMC-Flat-v0 \
-  --agent rsl_rl_cfg_entry_point \
-  --headless
-```
-
-从纯起身 checkpoint 继续训练 Recovery Stand：
-
-```bash
-python scripts/rsl_rl/train.py \
-  --task IRobot-WL-Recovery-Stand-VMC-Flat-v0 \
-  --agent rsl_rl_cfg_entry_point \
-  --resume \
-  --checkpoint logs/rsl_rl/wl_vmc_recovery_flat/2026-06-22_04-52-58/model_2999.pt \
-  --headless
-```
-
-VMC Flat 训练：
-
-```bash
-python scripts/rsl_rl/train.py \
+conda run -n rl_wheel_legged python scripts/rsl_rl/train.py \
   --task IRobot-WL-Velocity-VMC-Flat-v0 \
   --agent rsl_rl_cfg_entry_point \
+  --num_envs 4096 \
+  --max_iterations 5000 \
   --headless
 ```
 
-VMC Rough 训练：
+Rough 正式训练：
 
 ```bash
-python scripts/rsl_rl/train.py \
+conda run -n rl_wheel_legged python scripts/rsl_rl/train.py \
   --task IRobot-WL-Velocity-VMC-Rough-v0 \
   --agent rsl_rl_cfg_entry_point \
+  --num_envs 4096 \
+  --max_iterations 5000 \
   --headless
 ```
 
-## 5. 指定环境数训练
-
-例如设置 `num_envs=512`：
+Flat smoke test：
 
 ```bash
-python scripts/rsl_rl/train.py \
-  --task IRobot-WL-Recovery-VMC-Flat-v0 \
-  --agent rsl_rl_cfg_entry_point \
-  --num_envs 512 \
-  --headless
-```
-
-纯起身改动后的推荐 smoke test：
-
-```bash
-python scripts/rsl_rl/train.py \
-  --task IRobot-WL-Recovery-VMC-Flat-v0 \
+conda run -n rl_wheel_legged python scripts/rsl_rl/train.py \
+  --task IRobot-WL-Velocity-VMC-Flat-v0 \
   --agent rsl_rl_cfg_entry_point \
   --num_envs 512 \
   --max_iterations 50 \
   --headless
 ```
 
-Recovery Stand 推荐 smoke test：
+Rough smoke test：
 
 ```bash
-python scripts/rsl_rl/train.py \
-  --task IRobot-WL-Recovery-Stand-VMC-Flat-v0 \
+conda run -n rl_wheel_legged python scripts/rsl_rl/train.py \
+  --task IRobot-WL-Velocity-VMC-Rough-v0 \
   --agent rsl_rl_cfg_entry_point \
   --num_envs 512 \
   --max_iterations 50 \
   --headless
 ```
 
-## 6. 指定最大迭代数
+## 5. 断点续训
 
-例如只训练 500 轮：
-
-```bash
-python scripts/rsl_rl/train.py \
-  --task IRobot-WL-Recovery-VMC-Flat-v0 \
-  --agent rsl_rl_cfg_entry_point \
-  --max_iterations 500 \
-  --headless
-```
-
-## 7. 断点续训
-
-指定某次 run 和 checkpoint：
+继续某个 flat run：
 
 ```bash
-python scripts/rsl_rl/train.py \
-  --task IRobot-WL-Recovery-VMC-Flat-v0 \
+conda run -n rl_wheel_legged python scripts/rsl_rl/train.py \
+  --task IRobot-WL-Velocity-VMC-Flat-v0 \
   --agent rsl_rl_cfg_entry_point \
   --resume \
-  --experiment_name wl_vmc_recovery_flat \
-  --load_run 2026-06-09_12-00-00 \
-  --checkpoint model_300.pt \
+  --experiment_name wl_vmc_flat \
+  --load_run <run_name> \
+  --checkpoint <checkpoint_name> \
   --headless
 ```
 
-自动续接某个实验目录下最新 checkpoint：
+继续某个 rough run：
 
 ```bash
-python scripts/rsl_rl/train.py \
-  --task IRobot-WL-Recovery-VMC-Flat-v0 \
+conda run -n rl_wheel_legged python scripts/rsl_rl/train.py \
+  --task IRobot-WL-Velocity-VMC-Rough-v0 \
   --agent rsl_rl_cfg_entry_point \
   --resume \
-  --experiment_name wl_vmc_recovery_flat \
-  --checkpoint 'model_.*\.pt' \
+  --experiment_name wl_vmc_rough \
+  --load_run <run_name> \
+  --checkpoint <checkpoint_name> \
   --headless
 ```
 
-参数说明：
+注意：旧的 `wl_vmc_flat/2026-06-25_11-41-46/model_15600.pt` 是关节顺序修正前的历史模型，不建议在它上面继续训练作为新基准。建议从当前代码重新训练。
 
-- `--experiment_name` 对应 `logs/rsl_rl/<experiment_name>`
-- `--load_run` 对应某次训练目录名
-- `--checkpoint` 对应 checkpoint 文件名或正则
+## 6. Play 测试
 
-## 8. Play 测试
-
-播放纯起身任务最新模型：
+播放 flat 最新模型：
 
 ```bash
-python scripts/rsl_rl/play.py \
-  --task IRobot-WL-Recovery-VMC-Flat-v0 \
+conda run -n rl_wheel_legged python scripts/rsl_rl/play.py \
+  --task IRobot-WL-Velocity-VMC-Flat-v0 \
   --agent rsl_rl_cfg_entry_point
 ```
 
-播放速度跟踪任务最新模型：
+播放 rough 最新模型：
 
 ```bash
-python scripts/rsl_rl/play.py \
-  --task IRobot-WL-Velocity-VMC-Flat-v0 \
+conda run -n rl_wheel_legged python scripts/rsl_rl/play.py \
+  --task IRobot-WL-Velocity-VMC-Rough-v0 \
   --agent rsl_rl_cfg_entry_point
 ```
 
 指定 run 和 checkpoint：
 
 ```bash
-python scripts/rsl_rl/play.py \
-  --task IRobot-WL-Recovery-VMC-Flat-v0 \
+conda run -n rl_wheel_legged python scripts/rsl_rl/play.py \
+  --task IRobot-WL-Velocity-VMC-Flat-v0 \
   --agent rsl_rl_cfg_entry_point \
-  --load_run 2026-06-09_12-00-00 \
-  --checkpoint model_300.pt
-```
-
-限制测试环境数：
-
-```bash
-python scripts/rsl_rl/play.py \
-  --task IRobot-WL-Recovery-VMC-Flat-v0 \
-  --agent rsl_rl_cfg_entry_point \
-  --num_envs 32
+  --load_run <run_name> \
+  --checkpoint <checkpoint_name>
 ```
 
 实时播放：
 
 ```bash
-python scripts/rsl_rl/play.py \
-  --task IRobot-WL-Recovery-VMC-Flat-v0 \
+conda run -n rl_wheel_legged python scripts/rsl_rl/play.py \
+  --task IRobot-WL-Velocity-VMC-Flat-v0 \
   --agent rsl_rl_cfg_entry_point \
   --real-time
 ```
@@ -237,56 +177,63 @@ python scripts/rsl_rl/play.py \
 键盘控制：
 
 ```bash
-python scripts/rsl_rl/play.py \
-  --task IRobot-WL-Recovery-VMC-Flat-v0 \
+conda run -n rl_wheel_legged python scripts/rsl_rl/play.py \
+  --task IRobot-WL-Velocity-VMC-Flat-v0 \
   --agent rsl_rl_cfg_entry_point \
   --keyboard
 ```
 
-## 9. 录视频
+## 7. 录视频
 
 训练时录视频：
 
 ```bash
-python scripts/rsl_rl/train.py \
-  --task IRobot-WL-Recovery-VMC-Flat-v0 \
+conda run -n rl_wheel_legged python scripts/rsl_rl/train.py \
+  --task IRobot-WL-Velocity-VMC-Flat-v0 \
   --agent rsl_rl_cfg_entry_point \
   --video \
   --video_length 200 \
-  --video_interval 2000
+  --video_interval 2000 \
+  --headless
 ```
 
 Play 时录视频：
 
 ```bash
-python scripts/rsl_rl/play.py \
-  --task IRobot-WL-Recovery-VMC-Flat-v0 \
+conda run -n rl_wheel_legged python scripts/rsl_rl/play.py \
+  --task IRobot-WL-Velocity-VMC-Flat-v0 \
   --agent rsl_rl_cfg_entry_point \
   --video \
   --video_length 300
 ```
 
-## 10. TensorBoard
+## 8. TensorBoard
 
-启动 TensorBoard：
+查看所有 WL 训练：
 
 ```bash
 tensorboard --logdir logs/rsl_rl --port 6006
 ```
 
-如果只看某个实验：
+只看 flat：
 
 ```bash
-tensorboard --logdir logs/rsl_rl/wl_vmc_recovery_flat --port 6006
+tensorboard --logdir logs/rsl_rl/wl_vmc_flat --port 6006
+```
+
+只看 rough：
+
+```bash
+tensorboard --logdir logs/rsl_rl/wl_vmc_rough --port 6006
 ```
 
 浏览器打开：
 
-```bash
+```text
 http://localhost:6006
 ```
 
-## 11. 日志和模型保存位置
+## 9. 日志和模型位置
 
 训练日志默认保存在：
 
@@ -294,86 +241,53 @@ http://localhost:6006
 logs/rsl_rl/<experiment_name>/<timestamp_run_name>/
 ```
 
-例如：
+常见文件：
+
+```text
+model_*.pt
+params/env.yaml
+params/agent.yaml
+events.out.tfevents.*
+videos/
+```
+
+查看 flat 最新 run：
 
 ```bash
-logs/rsl_rl/wl_vmc_recovery_flat/2026-06-09_12-00-00/
+ls -lt logs/rsl_rl/wl_vmc_flat
 ```
 
-这个目录里通常有：
-
-- `model_*.pt`
-- `params/env.yaml`
-- `params/agent.yaml`
-- TensorBoard 事件文件
-- `videos/`
-
-查看最新 run：
+查看 rough 最新 run：
 
 ```bash
-ls -lt logs/rsl_rl/wl_vmc_recovery_flat
+ls -lt logs/rsl_rl/wl_vmc_rough
 ```
 
-查看某次 run 下的模型：
+查找 checkpoint：
 
 ```bash
-ls logs/rsl_rl/wl_vmc_recovery_flat/2026-06-09_12-00-00
+find logs/rsl_rl/wl_vmc_flat -maxdepth 2 -type f | grep 'model_.*\.pt' | sort
 ```
 
-## 12. 常用排查
+## 10. Isaac trace 导出建议
 
-列出当前日志目录：
+新训练完成后，先导出 Isaac trace，再接 MuJoCo。trace 中至少要核对：
 
-```bash
-find logs/rsl_rl -maxdepth 3 -type f | tail -n 50
-```
+- 当前帧 observation
+- history observation
+- raw action 和 clipped action
+- VMC torque
+- `theta0/L0`
+- base roll/pitch/yaw、速度和接触状态
 
-查看最新 checkpoint：
+目标是先确认 Isaac 内部的真实 `theta0/L0` 与 policy obs 中的腿角、腿长一致。确认之后，再用同一个 checkpoint 做 MuJoCo 对齐。
 
-```bash
-find logs/rsl_rl/wl_vmc_recovery_flat -maxdepth 2 -type f | grep 'model_.*\.pt' | sort
-```
+## 11. 推荐流程
 
-## 13. 导出 ONNX
-
-导出纯起身策略：
-
-```bash
-python scripts/rsl_rl/export_onnx.py \
-  --task IRobot-WL-Recovery-VMC-Flat-v0 \
-  --agent rsl_rl_cfg_entry_point \
-  --experiment_name wl_vmc_recovery_flat \
-  --load_run 2026-06-09_12-00-00 \
-  --checkpoint model_300.pt
-```
-
-如果导出脚本参数有变化，先查看帮助：
-
-```bash
-python scripts/rsl_rl/export_onnx.py --help
-```
-
-## 14. 服务器/本地同步日志
-
-从服务器拉取纯起身训练日志到本地：
-
-```bash
-rsync -avP -e "ssh -p 37023" \
-  root@connect.westc.seetacloud.com:/root/autodl-tmp/wl_workspace/IRobot_wl/logs/rsl_rl/wl_vmc_flat/2026-06-22_13-39-49 \
-  /home/sf4/Workspace/rm/rl_wheel_legged/IRobot_wl/IRobot_wl/logs/rsl_rl/wl_vmc_recovery_flat/
-```
-
-Windows PowerShell 示例：
-
-```powershell
-scp -r -P 37023 root@connect.westc.seetacloud.com:/root/autodl-tmp/wl_workspace/IRobot_wl/logs/rsl_rl/wl_vmc_recovery_stand_flat/2026-06-23_14-12-50 D:\rm\2026_code\rl\IRobot_wl\logs\rsl_rl\wl_vmc_recovery_stand_flat
-```
-
-## 15. 推荐使用顺序
-
-1. 先安装开发包
-2. 跑 `IRobot-WL-Recovery-VMC-Flat-v0` 纯起身训练
-3. 用 `play.py` 看前倒、后倒、侧倒是否能恢复 upright
-4. 用 `--resume` 继续训练纯起身
-5. 纯起身稳定后，再训练起身 + 速度跟踪任务
-6. 用 `tensorboard` 看 reward 和 episode length 曲线
+1. 安装开发包。
+2. 跑 flat smoke test，确认任务能正常启动。
+3. 从当前代码重新训练 flat。
+4. 用 `play.py` 看 Isaac 内是否能稳定站立和速度跟踪。
+5. 导出 Isaac trace，确认 observation、VMC 几何、action、torque 顺序一致。
+6. 进入 `sim2sim_mujoco_rebuild` 做 MuJoCo 单步对齐和闭环测试。
+7. flat 稳定后，再训练 rough。
