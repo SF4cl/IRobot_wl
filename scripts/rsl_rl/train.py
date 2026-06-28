@@ -79,6 +79,14 @@ parser.add_argument(
 parser.add_argument("--seed", type=int, default=None, help="Seed used for the environment")
 parser.add_argument("--max_iterations", type=int, default=None, help="RL Policy training iterations.")
 parser.add_argument(
+    "--recovery_start_stage",
+    type=int,
+    default=None,
+    choices=range(0, 5),
+    metavar="{0,1,2,3,4}",
+    help="Override the recovery curriculum stage to start from. By default, resumed runs continue from checkpoint iteration.",
+)
+parser.add_argument(
     "--distributed", action="store_true", default=False, help="Run training with multiple GPUs or nodes."
 )
 parser.add_argument("--export_io_descriptors", action="store_true", default=False, help="Export IO descriptors.")
@@ -144,6 +152,52 @@ torch.backends.cuda.matmul.allow_tf32 = True
 torch.backends.cudnn.allow_tf32 = True
 torch.backends.cudnn.deterministic = False
 torch.backends.cudnn.benchmark = False
+
+
+def _stage_start_iteration(stage: int, stage_steps: tuple[int, ...] | list[int]) -> int:
+    """Return the learning-iteration offset that starts the requested recovery stage."""
+    if stage <= 0:
+        return 0
+    index = min(stage - 1, len(stage_steps) - 1)
+    return int(stage_steps[index])
+
+
+def _recovery_stage_from_iteration(iteration: int, stage_steps: tuple[int, ...] | list[int]) -> int:
+    """Compute the recovery stage that corresponds to a global learning iteration."""
+    if iteration < stage_steps[0]:
+        return 0
+    if iteration < stage_steps[1]:
+        return 1
+    if iteration < stage_steps[2]:
+        return 2
+    if iteration < stage_steps[3]:
+        return 3
+    return 4
+
+
+def _set_recovery_curriculum_offset(
+    env,
+    offset: int,
+    stage_steps: tuple[int, ...] | list[int],
+) -> int:
+    """Store a global recovery-curriculum iteration offset on the unwrapped Isaac env."""
+    offset = max(int(offset), 0)
+    unwrapped = env.unwrapped
+    stage = _recovery_stage_from_iteration(offset, stage_steps)
+    setattr(unwrapped, "_recovery_curriculum_iteration_offset", offset)
+    setattr(unwrapped, "_recovery_curriculum_stage", stage)
+    return stage
+
+
+def _get_recovery_stage_steps(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg) -> tuple[int, ...]:
+    """Read configured recovery stage thresholds, falling back to the flat-task defaults."""
+    default_steps = (300, 900, 1500, 2100)
+    curriculum = getattr(env_cfg, "curriculum", None)
+    recovery_stages = getattr(curriculum, "recovery_stages", None)
+    params = getattr(recovery_stages, "params", None)
+    if isinstance(params, dict) and "stage_steps" in params:
+        return tuple(int(value) for value in params["stage_steps"])
+    return default_steps
 
 
 @hydra_task_config(args_cli.task, args_cli.agent)
@@ -253,11 +307,32 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     print("[DEBUG] Runner created.")
     # write git state to logs
     runner.add_git_repo_to_log(__file__)
+    stage_steps = _get_recovery_stage_steps(env_cfg)
+    recovery_curriculum_offset_changed = False
     # load the checkpoint
     if agent_cfg.resume or agent_cfg.algorithm.class_name == "Distillation":
         print(f"[INFO]: Loading model checkpoint from: {resume_path}")
         # load previously trained model
         runner.load(resume_path)
+        restored_stage = _set_recovery_curriculum_offset(env, runner.current_learning_iteration, stage_steps)
+        recovery_curriculum_offset_changed = True
+        print(
+            "[INFO]: Recovery curriculum iteration offset restored from checkpoint: "
+            f"{runner.current_learning_iteration} (stage {restored_stage})"
+        )
+
+    if args_cli.recovery_start_stage is not None:
+        recovery_iteration_offset = _stage_start_iteration(args_cli.recovery_start_stage, stage_steps)
+        restored_stage = _set_recovery_curriculum_offset(env, recovery_iteration_offset, stage_steps)
+        recovery_curriculum_offset_changed = True
+        print(
+            "[INFO]: Recovery curriculum start stage override: "
+            f"stage={restored_stage}, iteration_offset={recovery_iteration_offset}"
+        )
+
+    if recovery_curriculum_offset_changed:
+        print("[INFO]: Resetting environments after recovery curriculum offset update.")
+        env.reset()
 
     # dump the configuration into log-directory
     dump_yaml(os.path.join(log_dir, "params", "env.yaml"), env_cfg)

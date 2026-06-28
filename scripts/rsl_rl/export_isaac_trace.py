@@ -13,6 +13,7 @@ from pathlib import Path
 from packaging import version
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+WORKSPACE_ROOT = REPO_ROOT.parent
 LOCAL_SOURCE_DIR = REPO_ROOT / "source" / "IRobot_wl"
 if str(LOCAL_SOURCE_DIR) not in sys.path:
     sys.path.insert(0, str(LOCAL_SOURCE_DIR))
@@ -60,6 +61,9 @@ parser.add_argument("--init-theta0", type=float, default=None)
 parser.add_argument("--init-l0", type=float, default=None)
 parser.add_argument("--root-z", type=float, default=0.18)
 parser.add_argument("--keep-reset-pose", action="store_true")
+parser.add_argument("--isaac-usd-dir", type=str, default=str(WORKSPACE_ROOT / "sim2sim" / "isaac_usd_cache" / "wl"))
+parser.add_argument("--force-usd-conversion", action="store_true")
+parser.add_argument("--reuse-usd-path", type=str, default=None)
 cli_args.add_rsl_rl_args(parser)
 AppLauncher.add_app_launcher_args(parser)
 args_cli, hydra_args = parser.parse_known_args()
@@ -72,6 +76,8 @@ app_launcher = AppLauncher(args_cli)
 simulation_app = app_launcher.app
 
 import gymnasium as gym
+import isaaclab.sim as sim_utils
+import isaaclab.terrains as terrain_gen
 import torch
 from isaaclab.envs import DirectMARLEnv, DirectMARLEnvCfg, DirectRLEnvCfg, ManagerBasedRLEnvCfg, multi_agent_to_single_agent
 from isaaclab_rl.rsl_rl import RslRlBaseRunnerCfg, RslRlVecEnvWrapper
@@ -147,6 +153,54 @@ def _refresh_sim(env) -> None:
     env.scene.update(dt=0.0)
 
 
+def _configure_usd_cache(env_cfg) -> None:
+    spawn_cfg = env_cfg.scene.robot.spawn
+    if args_cli.reuse_usd_path is not None:
+        env_cfg.scene.robot.spawn = sim_utils.UsdFileCfg(
+            usd_path=str(Path(args_cli.reuse_usd_path)),
+            visible=spawn_cfg.visible,
+            semantic_tags=spawn_cfg.semantic_tags,
+            copy_from_source=spawn_cfg.copy_from_source,
+            mass_props=spawn_cfg.mass_props,
+            deformable_props=spawn_cfg.deformable_props,
+            rigid_props=spawn_cfg.rigid_props,
+            collision_props=spawn_cfg.collision_props,
+            activate_contact_sensors=spawn_cfg.activate_contact_sensors,
+            scale=spawn_cfg.scale,
+            articulation_props=spawn_cfg.articulation_props,
+            fixed_tendons_props=spawn_cfg.fixed_tendons_props,
+            spatial_tendons_props=spawn_cfg.spatial_tendons_props,
+            joint_drive_props=spawn_cfg.joint_drive_props,
+            visual_material_path=spawn_cfg.visual_material_path,
+            visual_material=spawn_cfg.visual_material,
+        )
+        return
+    usd_dir = Path(args_cli.isaac_usd_dir)
+    usd_dir.mkdir(parents=True, exist_ok=True)
+    spawn_cfg.usd_dir = str(usd_dir)
+    spawn_cfg.usd_file_name = "wl.usd"
+    spawn_cfg.force_usd_conversion = bool(args_cli.force_usd_conversion)
+
+
+def _configure_local_flat_terrain(env_cfg) -> None:
+    env_cfg.scene.terrain.terrain_type = "generator"
+    env_cfg.scene.terrain.terrain_generator = terrain_gen.TerrainGeneratorCfg(
+        size=(8.0, 8.0),
+        border_width=0.0,
+        num_rows=1,
+        num_cols=1,
+        horizontal_scale=0.1,
+        vertical_scale=0.005,
+        slope_threshold=0.75,
+        use_cache=False,
+        sub_terrains={
+            "flat": terrain_gen.MeshPlaneTerrainCfg(proportion=1.0),
+        },
+    )
+    env_cfg.scene.terrain.use_terrain_origins = False
+    env_cfg.scene.terrain.visual_material = None
+
+
 def _record(step: int, phase: str, obs_td, action, env) -> dict:
     robot = env.scene["robot"]
     action_term = env.action_manager.get_term("vmc")
@@ -217,6 +271,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         env_cfg.observations.policy_history.enable_corruption = False
     if hasattr(env_cfg.observations, "critic"):
         env_cfg.observations.critic.enable_corruption = False
+    _configure_usd_cache(env_cfg)
+    _configure_local_flat_terrain(env_cfg)
     env_cfg.events.randomize_apply_external_force_torque = None
     env_cfg.events.randomize_push_robot = None
     env_cfg.curriculum.command_levels_lin_vel = None
@@ -228,6 +284,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     env_cfg.commands.base_velocity.ranges.lin_vel_y = (0.0, 0.0)
     env_cfg.commands.base_velocity.ranges.ang_vel_z = (args_cli.command_yaw, args_cli.command_yaw)
     env_cfg.commands.base_velocity.heading_command = False
+    env_cfg.commands.base_velocity.debug_vis = False
     env_cfg.commands.base_velocity.rel_heading_envs = 0.0
     env_cfg.commands.base_velocity.rel_standing_envs = 0.0
     if hasattr(env_cfg.commands.base_velocity, "base_height_range"):

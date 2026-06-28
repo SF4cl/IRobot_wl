@@ -283,6 +283,13 @@ def reset_root_state_fallen(
     ground_height_offset: float = 0.05,
     allow_random_orientation: bool = True,
     simple_fall_type: str | None = None,
+    body_half_extents: tuple[float, float, float] = (0.22, 0.16, 0.09),
+    spawn_height_margin: float = 0.05,
+    max_fallen_spawn_height: float | None = None,
+    clamp_joint_positions: bool = True,
+    reject_near_upright_fallen: bool = True,
+    near_upright_projected_gravity_z: float = -0.55,
+    use_recovery_curriculum: bool = False,
 ):
     """Reset the robot to a random fallen pose for stand-up recovery training.
 
@@ -306,6 +313,13 @@ def reset_root_state_fallen(
         joint_velocity_range: (min, max) range for random joint velocities [rad/s].
         fallen_probability: Probability that a given env gets a fallen pose (vs normal).
         ground_height_offset: Extra height offset above ground for the base [m].
+        body_half_extents: Approximate base-body half extents used to keep random orientations above ground.
+        spawn_height_margin: Extra clearance above the oriented body support radius.
+        max_fallen_spawn_height: Optional cap on fallen spawn height.
+        clamp_joint_positions: Clamp randomized joints to soft joint position limits when available.
+        reject_near_upright_fallen: Replace fallen samples that are already too close to upright.
+        near_upright_projected_gravity_z: Fallen samples below this projected gravity z are considered too easy.
+        use_recovery_curriculum: Adjust fallen pose difficulty from env._recovery_curriculum_stage.
     """
     asset: Articulation = env.scene[asset_cfg.name]
     num_envs = len(env_ids)
@@ -341,6 +355,7 @@ def reset_root_state_fallen(
 
     device = asset.device
     root_states = asset.data.default_root_state[env_ids].clone()
+    recovery_stage = int(getattr(env, "_recovery_curriculum_stage", 0)) if use_recovery_curriculum else 3
 
     # --- Determine which envs get fallen vs normal ---
     is_fallen = torch.rand(num_envs, device=device) < fallen_probability
@@ -366,6 +381,12 @@ def reset_root_state_fallen(
                 pitch[fallen_ids] = math_utils.sample_uniform(-1.45, -1.15, (n_fallen,), device=device)
                 yaw[fallen_ids] = math_utils.sample_uniform(-0.05, 0.05, (n_fallen,), device=device)
                 fall_type = None
+            elif use_recovery_curriculum and recovery_stage <= 0:
+                fall_type = torch.randint(0, 2, (n_fallen,), device=device)
+            elif use_recovery_curriculum and recovery_stage == 1:
+                fall_type = torch.multinomial(torch.tensor([0.45, 0.45, 0.10], device=device), n_fallen, replacement=True)
+            elif use_recovery_curriculum and recovery_stage == 2:
+                fall_type = torch.multinomial(torch.tensor([0.35, 0.35, 0.30], device=device), n_fallen, replacement=True)
             else:
                 fall_type = torch.randint(0, 3, (n_fallen,), device=device)
 
@@ -377,25 +398,43 @@ def reset_root_state_fallen(
             mask = (fall_type == 0) if fall_type is not None else torch.zeros(n_fallen, dtype=torch.bool, device=device)
             if mask.any():
                 # Roll: ±60° to ±100° (1.05 to 1.75 rad), random sign
-                roll_mag = math_utils.sample_uniform(1.05, 1.75, (mask.sum().item(),), device=device)
+                if use_recovery_curriculum and recovery_stage <= 0:
+                    roll_range = (1.10, 1.45)
+                    pitch_range = (-0.25, 0.25)
+                elif use_recovery_curriculum and recovery_stage == 1:
+                    roll_range = (1.15, 1.75)
+                    pitch_range = (-0.45, 0.45)
+                else:
+                    roll_range = (1.05, 1.75)
+                    pitch_range = (-0.5, 0.5)
+                roll_mag = math_utils.sample_uniform(*roll_range, (mask.sum().item(),), device=device)
                 roll_sign = torch.sign(math_utils.sample_uniform(-1.0, 1.0, (mask.sum().item(),), device=device))
                 roll[fallen_ids[mask]] = roll_mag * roll_sign
-                pitch[fallen_ids[mask]] = math_utils.sample_uniform(-0.5, 0.5, (mask.sum().item(),), device=device)
+                pitch[fallen_ids[mask]] = math_utils.sample_uniform(*pitch_range, (mask.sum().item(),), device=device)
                 yaw[fallen_ids[mask]] = math_utils.sample_uniform(-3.14, 3.14, (mask.sum().item(),), device=device)
 
             # Type 1: Front/back fall (large pitch, small to moderate roll)
             mask = (fall_type == 1) if fall_type is not None else torch.zeros(n_fallen, dtype=torch.bool, device=device)
             if mask.any():
-                pitch_mag = math_utils.sample_uniform(1.05, 1.75, (mask.sum().item(),), device=device)
+                if use_recovery_curriculum and recovery_stage <= 0:
+                    pitch_range = (1.10, 1.45)
+                    roll_range = (-0.25, 0.25)
+                elif use_recovery_curriculum and recovery_stage == 1:
+                    pitch_range = (1.15, 1.75)
+                    roll_range = (-0.55, 0.55)
+                else:
+                    pitch_range = (1.05, 1.75)
+                    roll_range = (-0.8, 0.8)
+                pitch_mag = math_utils.sample_uniform(*pitch_range, (mask.sum().item(),), device=device)
                 pitch_sign = torch.sign(math_utils.sample_uniform(-1.0, 1.0, (mask.sum().item(),), device=device))
                 pitch[fallen_ids[mask]] = pitch_mag * pitch_sign
-                roll[fallen_ids[mask]] = math_utils.sample_uniform(-0.8, 0.8, (mask.sum().item(),), device=device)
+                roll[fallen_ids[mask]] = math_utils.sample_uniform(*roll_range, (mask.sum().item(),), device=device)
                 yaw[fallen_ids[mask]] = math_utils.sample_uniform(-3.14, 3.14, (mask.sum().item(),), device=device)
 
             # Type 2: Completely random (any orientation, can be upside-down)
             mask = (fall_type == 2) if fall_type is not None else torch.zeros(n_fallen, dtype=torch.bool, device=device)
             if mask.any():
-                if allow_random_orientation:
+                if allow_random_orientation and (not use_recovery_curriculum or recovery_stage >= 2):
                     roll[fallen_ids[mask]] = math_utils.sample_uniform(-3.14, 3.14, (mask.sum().item(),), device=device)
                     pitch[fallen_ids[mask]] = math_utils.sample_uniform(-3.14, 3.14, (mask.sum().item(),), device=device)
                 else:
@@ -416,6 +455,37 @@ def reset_root_state_fallen(
 
     orientations_delta = math_utils.quat_from_euler_xyz(roll, pitch, yaw)
     orientations = math_utils.quat_mul(root_states[:, 3:7], orientations_delta)
+    if reject_near_upright_fallen and is_fallen.any():
+        quat = orientations / torch.clamp(torch.linalg.norm(orientations, dim=1, keepdim=True), min=1.0e-6)
+        qx, qy = quat[:, 1], quat[:, 2]
+        projected_gravity_z = -(1.0 - 2.0 * (qx * qx + qy * qy))
+        easy_fallen = is_fallen & (projected_gravity_z < near_upright_projected_gravity_z)
+        if easy_fallen.any():
+            easy_count = int(easy_fallen.sum().item())
+            easy_ids = torch.where(easy_fallen)[0]
+            replacement_type = torch.randint(0, 2, (easy_count,), device=device)
+
+            side_mask = replacement_type == 0
+            if side_mask.any():
+                count = int(side_mask.sum().item())
+                roll_mag = math_utils.sample_uniform(1.25, 1.95, (count,), device=device)
+                roll_sign = torch.sign(math_utils.sample_uniform(-1.0, 1.0, (count,), device=device))
+                ids = easy_ids[side_mask]
+                roll[ids] = roll_mag * roll_sign
+                pitch[ids] = math_utils.sample_uniform(-0.65, 0.65, (count,), device=device)
+
+            pitch_mask = ~side_mask
+            if pitch_mask.any():
+                count = int(pitch_mask.sum().item())
+                pitch_mag = math_utils.sample_uniform(1.25, 1.95, (count,), device=device)
+                pitch_sign = torch.sign(math_utils.sample_uniform(-1.0, 1.0, (count,), device=device))
+                ids = easy_ids[pitch_mask]
+                pitch[ids] = pitch_mag * pitch_sign
+                roll[ids] = math_utils.sample_uniform(-0.75, 0.75, (count,), device=device)
+
+            yaw[easy_ids] = math_utils.sample_uniform(-3.14, 3.14, (easy_count,), device=device)
+            orientations_delta = math_utils.quat_from_euler_xyz(roll, pitch, yaw)
+            orientations = math_utils.quat_mul(root_states[:, 3:7], orientations_delta)
 
     # --- Sample root positions ---
     pos_x = math_utils.sample_uniform(
@@ -424,8 +494,27 @@ def reset_root_state_fallen(
     pos_y = math_utils.sample_uniform(
         pose_range["y"][0], pose_range["y"][1], (num_envs,), device=device
     )
-    # Base height: close to ground for fallen, target height for normal
-    pos_z_fallen = torch.full((num_envs,), ground_height_offset, device=device)
+    # Base height: close to ground for fallen, but high enough that the randomly
+    # oriented base body is not spawned deeply inside the plane.
+    quat = orientations
+    quat = quat / torch.clamp(torch.linalg.norm(quat, dim=1, keepdim=True), min=1.0e-6)
+    qw, qx, qy, qz = quat[:, 0], quat[:, 1], quat[:, 2], quat[:, 3]
+    rot_z_row_abs = torch.stack(
+        [
+            2.0 * (qx * qz - qw * qy),
+            2.0 * (qy * qz + qw * qx),
+            1.0 - 2.0 * (qx * qx + qy * qy),
+        ],
+        dim=1,
+    ).abs()
+    half_extents = torch.tensor(body_half_extents, device=device, dtype=root_states.dtype)
+    oriented_body_z_radius = torch.sum(rot_z_row_abs * half_extents.unsqueeze(0), dim=1)
+    pos_z_fallen = torch.clamp(
+        oriented_body_z_radius + spawn_height_margin,
+        min=ground_height_offset,
+    )
+    if max_fallen_spawn_height is not None:
+        pos_z_fallen = torch.clamp(pos_z_fallen, max=max_fallen_spawn_height)
     pos_z_normal = root_states[:, 2]  # default height
     pos_z = torch.where(is_fallen, pos_z_fallen, pos_z_normal)
 
@@ -448,6 +537,14 @@ def reset_root_state_fallen(
     jp_min, jp_max = joint_position_range
     joint_noise = math_utils.sample_uniform(jp_min, jp_max, (num_envs, num_joints), device=device)
     joint_pos[:, joint_ids] += joint_noise
+    if clamp_joint_positions and hasattr(asset.data, "soft_joint_pos_limits"):
+        joint_limits = asset.data.soft_joint_pos_limits[env_ids][:, joint_ids]
+        lower = joint_limits[..., 0]
+        upper = joint_limits[..., 1]
+        valid_limits = torch.isfinite(lower) & torch.isfinite(upper) & (upper > lower)
+        values = joint_pos[:, joint_ids]
+        clamped_values = torch.minimum(torch.maximum(values, lower), upper)
+        joint_pos[:, joint_ids] = torch.where(valid_limits, clamped_values, values)
 
     # --- Sample random joint velocities ---
     jv_min, jv_max = joint_velocity_range

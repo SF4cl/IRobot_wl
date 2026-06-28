@@ -68,6 +68,232 @@ def ref_command_base_height_exp(
     return torch.exp(-error / 0.001)
 
 
+def recovery_curriculum_gate(env: ManagerBasedRLEnv, min_stage: int = 0, max_stage: int | None = None) -> torch.Tensor:
+    """Return 1 when the global recovery curriculum stage is in range."""
+    stage = int(getattr(env, "_recovery_curriculum_stage", 0))
+    enabled = stage >= min_stage and (max_stage is None or stage <= max_stage)
+    return torch.full((env.num_envs,), float(enabled), device=env.device)
+
+
+def recovery_small_command_gate(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    lin_vel_threshold: float = 0.1,
+    ang_vel_threshold: float = 0.1,
+) -> torch.Tensor:
+    """Return 1 for environments commanded to stand nearly still."""
+    command = env.command_manager.get_command(command_name)
+    small_command = (torch.abs(command[:, 0]) < lin_vel_threshold) & (torch.abs(command[:, 2]) < ang_vel_threshold)
+    return small_command.float()
+
+
+def recovery_stage_small_command_gate(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    min_stage: int = 4,
+    max_stage: int | None = None,
+    lin_vel_threshold: float = 0.1,
+    ang_vel_threshold: float = 0.1,
+) -> torch.Tensor:
+    """Gate rewards to small-command environments within a curriculum stage range."""
+    return recovery_curriculum_gate(env, min_stage=min_stage, max_stage=max_stage) * recovery_small_command_gate(
+        env,
+        command_name=command_name,
+        lin_vel_threshold=lin_vel_threshold,
+        ang_vel_threshold=ang_vel_threshold,
+    )
+
+
+def recovery_run_gate(
+    env: ManagerBasedRLEnv,
+    upright_threshold: float = -0.92,
+    upright_ramp: float = 0.08,
+    min_total_wheel_load_n: float = 55.0,
+    min_each_wheel_load_n: float = 12.0,
+    theta0_threshold: float = 0.35,
+    theta0_ramp: float = 0.55,
+    target_leg_length: float = 0.125,
+    leg_length_margin: float = 0.04,
+    non_wheel_contact_threshold: float = 2.0,
+    leg_joint_names: list[str] | None = None,
+    non_wheel_sensor_cfg: SceneEntityCfg | None = None,
+    l1: float = 0.21665632675675972,
+    l2: float = 0.2540023491164531,
+    offset: float = -0.007712217793726145,
+    theta1_offset: float = 0.14299916248023697,
+    theta2_offset: float = 2.406020345452543,
+    sensor_cfg: SceneEntityCfg = SceneEntityCfg("contact_forces"),
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Gate locomotion rewards until recovery has reached a wheel-only ready stand."""
+    if int(getattr(env, "_recovery_curriculum_stage", 4)) < 4:
+        return torch.zeros(env.num_envs, device=env.device)
+
+    asset: RigidObject = env.scene[asset_cfg.name]
+    upright_gate = torch.clamp((upright_threshold - asset.data.projected_gravity_b[:, 2]) / upright_ramp, 0.0, 1.0)
+
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    net_contact_forces = contact_sensor.data.net_forces_w_history
+    wheel_force_z = torch.max(torch.abs(net_contact_forces[:, :, sensor_cfg.body_ids, 2]), dim=1)[0]
+    total_load_gate = torch.clamp(torch.sum(wheel_force_z, dim=1) / min_total_wheel_load_n, 0.0, 1.0)
+    each_load_gate = torch.mean(torch.clamp(wheel_force_z / min_each_wheel_load_n, 0.0, 1.0), dim=1)
+
+    leg_gate = torch.ones_like(upright_gate)
+    if leg_joint_names is not None:
+        leg_length, theta0 = _recovery_stand_leg_state(
+            env, leg_joint_names, l1, l2, offset, theta1_offset, theta2_offset, asset_cfg
+        )
+        theta_excess = torch.clamp(torch.max(torch.abs(theta0), dim=1).values - theta0_threshold, min=0.0)
+        theta_gate = torch.clamp(1.0 - theta_excess / max(theta0_ramp, 1.0e-6), 0.0, 1.0)
+        length_excess = torch.clamp(torch.max(leg_length, dim=1).values - (target_leg_length + leg_length_margin), min=0.0)
+        length_gate = torch.clamp(1.0 - length_excess / max(leg_length_margin, 1.0e-6), 0.0, 1.0)
+        leg_gate = theta_gate * length_gate
+
+    wheel_only_gate = torch.ones_like(upright_gate)
+    if non_wheel_sensor_cfg is not None:
+        non_wheel_forces = contact_sensor.data.net_forces_w_history[:, :, non_wheel_sensor_cfg.body_ids]
+        non_wheel_force = torch.max(torch.linalg.norm(non_wheel_forces, dim=-1), dim=1)[0]
+        max_non_wheel_force = torch.max(non_wheel_force, dim=1).values
+        wheel_only_gate = (max_non_wheel_force < non_wheel_contact_threshold).float()
+
+    return upright_gate * total_load_gate * each_load_gate * leg_gate * wheel_only_gate
+
+
+def recovery_gated_ref_track_lin_vel_exp(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    tracking_sigma: float = 0.25,
+    sensor_cfg: SceneEntityCfg = SceneEntityCfg("contact_forces"),
+    non_wheel_sensor_cfg: SceneEntityCfg | None = None,
+    leg_joint_names: list[str] | None = None,
+    l1: float = 0.21665632675675972,
+    l2: float = 0.2540023491164531,
+    offset: float = -0.007712217793726145,
+    theta1_offset: float = 0.14299916248023697,
+    theta2_offset: float = 2.406020345452543,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Reference x-velocity tracking, enabled only after wheel-supported recovery."""
+    gate = recovery_run_gate(
+        env,
+        sensor_cfg=sensor_cfg,
+        non_wheel_sensor_cfg=non_wheel_sensor_cfg,
+        leg_joint_names=leg_joint_names,
+        l1=l1,
+        l2=l2,
+        offset=offset,
+        theta1_offset=theta1_offset,
+        theta2_offset=theta2_offset,
+        asset_cfg=asset_cfg,
+    )
+    return gate * ref_track_lin_vel_exp(
+        env, command_name, tracking_sigma, asset_cfg
+    )
+
+
+def recovery_gated_ref_track_lin_vel_enhance(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    tracking_sigma: float = 0.25,
+    sensor_cfg: SceneEntityCfg = SceneEntityCfg("contact_forces"),
+    non_wheel_sensor_cfg: SceneEntityCfg | None = None,
+    leg_joint_names: list[str] | None = None,
+    l1: float = 0.21665632675675972,
+    l2: float = 0.2540023491164531,
+    offset: float = -0.007712217793726145,
+    theta1_offset: float = 0.14299916248023697,
+    theta2_offset: float = 2.406020345452543,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Broad x-velocity shaping, enabled only after wheel-supported recovery."""
+    gate = recovery_run_gate(
+        env,
+        sensor_cfg=sensor_cfg,
+        non_wheel_sensor_cfg=non_wheel_sensor_cfg,
+        leg_joint_names=leg_joint_names,
+        l1=l1,
+        l2=l2,
+        offset=offset,
+        theta1_offset=theta1_offset,
+        theta2_offset=theta2_offset,
+        asset_cfg=asset_cfg,
+    )
+    return gate * ref_track_lin_vel_enhance(
+        env, command_name, tracking_sigma, asset_cfg
+    )
+
+
+def recovery_gated_ref_track_ang_vel_exp(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    tracking_sigma: float = 0.25,
+    sensor_cfg: SceneEntityCfg = SceneEntityCfg("contact_forces"),
+    non_wheel_sensor_cfg: SceneEntityCfg | None = None,
+    leg_joint_names: list[str] | None = None,
+    l1: float = 0.21665632675675972,
+    l2: float = 0.2540023491164531,
+    offset: float = -0.007712217793726145,
+    theta1_offset: float = 0.14299916248023697,
+    theta2_offset: float = 2.406020345452543,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Reference yaw-rate tracking, enabled only after wheel-supported recovery."""
+    gate = recovery_run_gate(
+        env,
+        sensor_cfg=sensor_cfg,
+        non_wheel_sensor_cfg=non_wheel_sensor_cfg,
+        leg_joint_names=leg_joint_names,
+        l1=l1,
+        l2=l2,
+        offset=offset,
+        theta1_offset=theta1_offset,
+        theta2_offset=theta2_offset,
+        asset_cfg=asset_cfg,
+    )
+    return gate * ref_track_ang_vel_exp(
+        env, command_name, tracking_sigma, asset_cfg
+    )
+
+
+def recovery_low_to_command_base_height_exp(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    recovery_target_height: float = 0.155,
+    fallback_target_height: float = 0.235,
+    sensor_cfg: SceneEntityCfg = SceneEntityCfg("contact_forces"),
+    non_wheel_sensor_cfg: SceneEntityCfg | None = None,
+    leg_joint_names: list[str] | None = None,
+    l1: float = 0.21665632675675972,
+    l2: float = 0.2540023491164531,
+    offset: float = -0.007712217793726145,
+    theta1_offset: float = 0.14299916248023697,
+    theta2_offset: float = 2.406020345452543,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Track low recovery height first, then the random command height once running."""
+    command_term = env.command_manager.get_term(command_name)
+    sampled_target = getattr(command_term, "base_height_command_b", None)
+    if sampled_target is None:
+        sampled_target = torch.full((env.num_envs,), fallback_target_height, device=env.device)
+
+    run_gate = recovery_run_gate(
+        env,
+        sensor_cfg=sensor_cfg,
+        non_wheel_sensor_cfg=non_wheel_sensor_cfg,
+        leg_joint_names=leg_joint_names,
+        l1=l1,
+        l2=l2,
+        offset=offset,
+        theta1_offset=theta1_offset,
+        theta2_offset=theta2_offset,
+        asset_cfg=asset_cfg,
+    )
+    target = recovery_target_height * (1.0 - run_gate) + sampled_target * run_gate
+    asset: RigidObject = env.scene[asset_cfg.name]
+    error = torch.square(asset.data.root_pos_w[:, 2] - target)
+    return torch.exp(-error / 0.001)
+
+
 def vmc_action_smooth_l2(env: ManagerBasedRLEnv, action_name: str = "vmc") -> torch.Tensor:
     """Reference second-difference penalty on the four leg action channels."""
     action_term = env.action_manager.get_term(action_name)
@@ -1767,6 +1993,29 @@ def recovery_stand_leg_length_l2(
     return torch.mean(torch.square(leg_length - target), dim=1)
 
 
+def recovery_stand_min_leg_length_l2(
+    env: ManagerBasedRLEnv,
+    target_length: float = 0.125,
+    upright_threshold: float = -0.85,
+    fallen_threshold: float = -0.35,
+    leg_joint_names: list[str] | None = None,
+    wheel_sensor_cfg: SceneEntityCfg = SceneEntityCfg("contact_forces"),
+    l1: float = 0.21665632675675972,
+    l2: float = 0.2540023491164531,
+    offset: float = -0.007712217793726145,
+    theta1_offset: float = 0.14299916248023697,
+    theta2_offset: float = 2.406020345452543,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Hold the legs near minimum length during the upright recovery phase."""
+    leg_length, _ = _recovery_stand_leg_state(
+        env, leg_joint_names, l1, l2, offset, theta1_offset, theta2_offset, asset_cfg
+    )
+    phase = recovery_stand_upright_factor(env, upright_threshold, fallen_threshold, asset_cfg)
+    run_gate = recovery_run_gate(env, sensor_cfg=wheel_sensor_cfg, asset_cfg=asset_cfg)
+    return phase * (1.0 - run_gate) * torch.mean(torch.square(leg_length - target_length), dim=1)
+
+
 def recovery_stand_leg_symmetry_l2(
     env: ManagerBasedRLEnv,
     upright_threshold: float = -0.75,
@@ -1794,6 +2043,7 @@ def recovery_stand_theta0_l2(
     upright_threshold: float = -0.85,
     fallen_threshold: float = -0.35,
     leg_joint_names: list[str] | None = None,
+    wheel_sensor_cfg: SceneEntityCfg = SceneEntityCfg("contact_forces"),
     l1: float = 0.21665632675675972,
     l2: float = 0.2540023491164531,
     offset: float = -0.007712217793726145,
@@ -1807,7 +2057,8 @@ def recovery_stand_theta0_l2(
     )
 
     phase = recovery_stand_upright_factor(env, upright_threshold, fallen_threshold, asset_cfg)
-    return phase * torch.mean(torch.square(theta0), dim=1)
+    run_gate = recovery_run_gate(env, sensor_cfg=wheel_sensor_cfg, asset_cfg=asset_cfg)
+    return phase * (1.0 - run_gate) * torch.mean(torch.square(theta0), dim=1)
 
 
 def recovery_stand_theta0_worst_l2(
@@ -1928,6 +2179,23 @@ def recovery_stand_leg_ground_contact(
     contact_force = torch.max(torch.norm(net_contact_forces[:, :, sensor_cfg.body_ids], dim=-1), dim=1)[0]
     contact_count = torch.sum((contact_force > threshold).float(), dim=1)
 
+    phase = recovery_stand_upright_factor(env, upright_threshold, fallen_threshold, asset_cfg)
+    return phase * contact_count
+
+
+def recovery_wheel_only_contact_l2(
+    env: ManagerBasedRLEnv,
+    threshold: float = 1.0,
+    upright_threshold: float = -0.85,
+    fallen_threshold: float = -0.35,
+    sensor_cfg: SceneEntityCfg = SceneEntityCfg("contact_forces"),
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Penalize any non-wheel body contact once the body is recovering upright."""
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    net_contact_forces = contact_sensor.data.net_forces_w_history
+    contact_force = torch.max(torch.norm(net_contact_forces[:, :, sensor_cfg.body_ids], dim=-1), dim=1)[0]
+    contact_count = torch.sum((contact_force > threshold).float(), dim=1)
     phase = recovery_stand_upright_factor(env, upright_threshold, fallen_threshold, asset_cfg)
     return phase * contact_count
 
@@ -2143,6 +2411,293 @@ def recovery_stand_wheel_vel_l2(
     asset: Articulation = env.scene[asset_cfg.name]
     phase = recovery_stand_upright_factor(env, upright_threshold, fallen_threshold, asset_cfg)
     return phase * torch.mean(torch.square(asset.data.joint_vel[:, asset_cfg.joint_ids]), dim=1)
+
+
+def recovery_stage_still_lin_vel_xy_l2(
+    env: ManagerBasedRLEnv,
+    stage: int = 3,
+    upright_threshold: float = -0.85,
+    fallen_threshold: float = -0.35,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Penalize horizontal drift only during the static stabilization curriculum stage."""
+    stage_gate = recovery_curriculum_gate(env, min_stage=stage, max_stage=stage)
+    return stage_gate * recovery_stand_lin_vel_xy_l2(env, upright_threshold, fallen_threshold, asset_cfg)
+
+
+def recovery_stage_still_ang_vel_z_l2(
+    env: ManagerBasedRLEnv,
+    stage: int = 3,
+    upright_threshold: float = -0.85,
+    fallen_threshold: float = -0.35,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Penalize yaw spinning only during the static stabilization curriculum stage."""
+    stage_gate = recovery_curriculum_gate(env, min_stage=stage, max_stage=stage)
+    return stage_gate * recovery_stand_ang_vel_z_l2(env, upright_threshold, fallen_threshold, asset_cfg)
+
+
+def recovery_stage_still_wheel_vel_l2(
+    env: ManagerBasedRLEnv,
+    stage: int = 3,
+    upright_threshold: float = -0.85,
+    fallen_threshold: float = -0.35,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Penalize wheel spin only during the static stabilization curriculum stage."""
+    stage_gate = recovery_curriculum_gate(env, min_stage=stage, max_stage=stage)
+    return stage_gate * recovery_stand_wheel_vel_l2(env, upright_threshold, fallen_threshold, asset_cfg)
+
+
+def recovery_stage_wheel_vel_l2(
+    env: ManagerBasedRLEnv,
+    min_stage: int = 4,
+    max_stage: int | None = None,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Penalize wheel speed during later curriculum stages without affecting early recovery."""
+    asset: Articulation = env.scene[asset_cfg.name]
+    stage_gate = recovery_curriculum_gate(env, min_stage=min_stage, max_stage=max_stage)
+    return stage_gate * torch.mean(torch.square(asset.data.joint_vel[:, asset_cfg.joint_ids]), dim=1)
+
+
+def recovery_stage_wheel_torque_l2(
+    env: ManagerBasedRLEnv,
+    min_stage: int = 4,
+    max_stage: int | None = None,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Penalize wheel torque lightly during locomotion to reduce over-aggressive wheel use."""
+    asset: Articulation = env.scene[asset_cfg.name]
+    stage_gate = recovery_curriculum_gate(env, min_stage=min_stage, max_stage=max_stage)
+    return stage_gate * torch.mean(torch.square(asset.data.applied_torque[:, asset_cfg.joint_ids]), dim=1)
+
+
+def recovery_stage_base_lin_vel_z_l2(
+    env: ManagerBasedRLEnv,
+    min_stage: int = 4,
+    max_stage: int | None = None,
+    start_time_s: float = 0.5,
+    ramp_time_s: float = 1.0,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Penalize vertical body bounce during the final locomotion stage."""
+    asset: Articulation = env.scene[asset_cfg.name]
+    stage_gate = recovery_curriculum_gate(env, min_stage=min_stage, max_stage=max_stage)
+    time_gate = _recovery_stand_time_gate(env, start_time_s=start_time_s, ramp_time_s=ramp_time_s)
+    return stage_gate * time_gate * torch.square(asset.data.root_lin_vel_b[:, 2])
+
+
+def recovery_stage_leg_length_vel_l2(
+    env: ManagerBasedRLEnv,
+    min_stage: int = 4,
+    max_stage: int | None = None,
+    start_time_s: float = 0.5,
+    ramp_time_s: float = 1.0,
+    leg_joint_names: list[str] | None = None,
+    wheel_joint_names: list[str] | None = None,
+    l1: float = 0.21665632675675972,
+    l2: float = 0.2540023491164531,
+    offset: float = -0.007712217793726145,
+    theta1_offset: float = 0.14299916248023697,
+    theta2_offset: float = 2.406020345452543,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Penalize rapid telescoping of the virtual leg length in the run stage."""
+    if leg_joint_names is None or wheel_joint_names is None:
+        return torch.zeros(env.num_envs, device=env.device)
+
+    from IRobot_wl.tasks.manager_based.locomotion.velocity.mdp.vmc import compute_vmc_state
+
+    asset: Articulation = env.scene[asset_cfg.name]
+    leg_joint_indices = asset.find_joints(leg_joint_names, preserve_order=True)[0]
+    wheel_joint_indices = asset.find_joints(wheel_joint_names, preserve_order=True)[0]
+    state = compute_vmc_state(
+        asset.data.joint_pos,
+        asset.data.joint_vel,
+        leg_joint_indices,
+        wheel_joint_indices,
+        l1,
+        l2,
+        offset,
+        theta1_offset,
+        theta2_offset,
+        env.step_dt,
+    )
+    stage_gate = recovery_curriculum_gate(env, min_stage=min_stage, max_stage=max_stage)
+    time_gate = _recovery_stand_time_gate(env, start_time_s=start_time_s, ramp_time_s=ramp_time_s)
+    return stage_gate * time_gate * torch.mean(torch.square(state["L0_dot"]), dim=1)
+
+
+def recovery_stage_command_base_height_under_l2(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    min_stage: int = 4,
+    max_stage: int | None = None,
+    fallback_target_height: float = 0.235,
+    margin: float = 0.005,
+    start_time_s: float = 0.5,
+    ramp_time_s: float = 1.0,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Penalize staying below the sampled height command in the run stage."""
+    command_term = env.command_manager.get_term(command_name)
+    sampled_target = getattr(command_term, "base_height_command_b", None)
+    if sampled_target is None:
+        sampled_target = torch.full((env.num_envs,), fallback_target_height, device=env.device)
+
+    asset: Articulation = env.scene[asset_cfg.name]
+    stage_gate = recovery_curriculum_gate(env, min_stage=min_stage, max_stage=max_stage)
+    time_gate = _recovery_stand_time_gate(env, start_time_s=start_time_s, ramp_time_s=ramp_time_s)
+    under_error = torch.clamp(sampled_target - asset.data.root_pos_w[:, 2] - margin, min=0.0)
+    return stage_gate * time_gate * torch.square(under_error)
+
+
+def recovery_stage_force_action_l2(
+    env: ManagerBasedRLEnv,
+    action_name: str = "vmc",
+    min_stage: int = 4,
+    max_stage: int | None = None,
+    start_time_s: float = 0.5,
+    ramp_time_s: float = 1.0,
+) -> torch.Tensor:
+    """Penalize sustained residual axial-force actions in the run stage."""
+    action_term = env.action_manager.get_term(action_name)
+    actions = getattr(action_term, "processed_actions", action_term.raw_actions)
+    stage_gate = recovery_curriculum_gate(env, min_stage=min_stage, max_stage=max_stage)
+    time_gate = _recovery_stand_time_gate(env, start_time_s=start_time_s, ramp_time_s=ramp_time_s)
+    return stage_gate * time_gate * torch.mean(torch.square(actions[:, [1, 4]]), dim=1)
+
+
+def recovery_stage_force_action_symmetry_l2(
+    env: ManagerBasedRLEnv,
+    action_name: str = "vmc",
+    min_stage: int = 4,
+    max_stage: int | None = None,
+    start_time_s: float = 0.5,
+    ramp_time_s: float = 1.0,
+) -> torch.Tensor:
+    """Penalize left/right residual support-force imbalance in the run stage."""
+    action_term = env.action_manager.get_term(action_name)
+    actions = getattr(action_term, "processed_actions", action_term.raw_actions)
+    stage_gate = recovery_curriculum_gate(env, min_stage=min_stage, max_stage=max_stage)
+    time_gate = _recovery_stand_time_gate(env, start_time_s=start_time_s, ramp_time_s=ramp_time_s)
+    return stage_gate * time_gate * torch.square(actions[:, 1] - actions[:, 4])
+
+
+def recovery_stage_zero_cmd_force_action_l2(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    action_name: str = "vmc",
+    min_stage: int = 4,
+    max_stage: int | None = None,
+    lin_vel_threshold: float = 0.1,
+    ang_vel_threshold: float = 0.1,
+    start_time_s: float = 0.5,
+    ramp_time_s: float = 1.0,
+) -> torch.Tensor:
+    """Penalize residual support-force actions more strongly when command is zero."""
+    action_term = env.action_manager.get_term(action_name)
+    actions = getattr(action_term, "processed_actions", action_term.raw_actions)
+    gate = recovery_stage_small_command_gate(
+        env,
+        command_name=command_name,
+        min_stage=min_stage,
+        max_stage=max_stage,
+        lin_vel_threshold=lin_vel_threshold,
+        ang_vel_threshold=ang_vel_threshold,
+    )
+    time_gate = _recovery_stand_time_gate(env, start_time_s=start_time_s, ramp_time_s=ramp_time_s)
+    return gate * time_gate * torch.mean(torch.square(actions[:, [1, 4]]), dim=1)
+
+
+def recovery_stage_zero_cmd_lin_vel_xy_l2(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    min_stage: int = 4,
+    max_stage: int | None = None,
+    lin_vel_threshold: float = 0.1,
+    ang_vel_threshold: float = 0.1,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Penalize horizontal drift when the locomotion command is effectively zero."""
+    asset: Articulation = env.scene[asset_cfg.name]
+    gate = recovery_stage_small_command_gate(
+        env,
+        command_name=command_name,
+        min_stage=min_stage,
+        max_stage=max_stage,
+        lin_vel_threshold=lin_vel_threshold,
+        ang_vel_threshold=ang_vel_threshold,
+    )
+    return gate * torch.sum(torch.square(asset.data.root_lin_vel_b[:, :2]), dim=1)
+
+
+def recovery_stage_zero_cmd_ang_vel_z_l2(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    min_stage: int = 4,
+    max_stage: int | None = None,
+    lin_vel_threshold: float = 0.1,
+    ang_vel_threshold: float = 0.1,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Penalize yaw drift when the locomotion command is effectively zero."""
+    asset: Articulation = env.scene[asset_cfg.name]
+    gate = recovery_stage_small_command_gate(
+        env,
+        command_name=command_name,
+        min_stage=min_stage,
+        max_stage=max_stage,
+        lin_vel_threshold=lin_vel_threshold,
+        ang_vel_threshold=ang_vel_threshold,
+    )
+    return gate * torch.square(asset.data.root_ang_vel_b[:, 2])
+
+
+def recovery_stage_zero_cmd_wheel_vel_l2(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    min_stage: int = 4,
+    max_stage: int | None = None,
+    lin_vel_threshold: float = 0.1,
+    ang_vel_threshold: float = 0.1,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Penalize wheel spin when the locomotion command is effectively zero."""
+    asset: Articulation = env.scene[asset_cfg.name]
+    gate = recovery_stage_small_command_gate(
+        env,
+        command_name=command_name,
+        min_stage=min_stage,
+        max_stage=max_stage,
+        lin_vel_threshold=lin_vel_threshold,
+        ang_vel_threshold=ang_vel_threshold,
+    )
+    return gate * torch.mean(torch.square(asset.data.joint_vel[:, asset_cfg.joint_ids]), dim=1)
+
+
+def recovery_stage_zero_cmd_wheel_action_l2(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    action_name: str = "vmc",
+    min_stage: int = 4,
+    max_stage: int | None = None,
+    lin_vel_threshold: float = 0.1,
+    ang_vel_threshold: float = 0.1,
+) -> torch.Tensor:
+    """Penalize wheel action effort when the locomotion command is effectively zero."""
+    action_term = env.action_manager.get_term(action_name)
+    actions = getattr(action_term, "processed_actions", action_term.raw_actions)
+    gate = recovery_stage_small_command_gate(
+        env,
+        command_name=command_name,
+        min_stage=min_stage,
+        max_stage=max_stage,
+        lin_vel_threshold=lin_vel_threshold,
+        ang_vel_threshold=ang_vel_threshold,
+    )
+    return gate * torch.mean(torch.square(actions[:, [2, 5]]), dim=1)
 
 
 def recovery_wheel_assist(

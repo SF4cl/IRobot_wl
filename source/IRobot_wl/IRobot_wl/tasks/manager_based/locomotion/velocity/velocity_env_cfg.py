@@ -662,6 +662,104 @@ class RewardsCfg:
 
     upward = RewTerm(func=mdp.upward, weight=0.0)
 
+    # Recovery / self-righting
+    self_right_orientation_l2 = RewTerm(func=mdp.self_right_orientation_l2, weight=0.0)
+    recovery_upright_progress = RewTerm(func=mdp.recovery_upright_progress, weight=0.0)
+    self_right_tilt_progress = RewTerm(func=mdp.self_right_tilt_progress, weight=0.0)
+    self_right_upright_success = RewTerm(func=mdp.self_right_upright_success, weight=0.0)
+    recovery_stage_gate = RewTerm(func=mdp.recovery_curriculum_gate, weight=0.0)
+    recovery_stand_min_leg_length = RewTerm(
+        func=mdp.recovery_stand_min_leg_length_l2,
+        weight=0.0,
+        params={"leg_joint_names": None},
+    )
+    recovery_stand_theta0 = RewTerm(
+        func=mdp.recovery_stand_theta0_l2,
+        weight=0.0,
+        params={"leg_joint_names": None},
+    )
+    recovery_stand_wheel_contact = RewTerm(
+        func=mdp.recovery_stand_wheel_contact,
+        weight=0.0,
+        params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names="")},
+    )
+    recovery_stand_wheel_load = RewTerm(
+        func=mdp.recovery_stand_wheel_load,
+        weight=0.0,
+        params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names="")},
+    )
+    recovery_wheel_only_contact = RewTerm(
+        func=mdp.recovery_wheel_only_contact_l2,
+        weight=0.0,
+        params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names="")},
+    )
+    recovery_still_lin_vel_xy = RewTerm(func=mdp.recovery_stage_still_lin_vel_xy_l2, weight=0.0)
+    recovery_still_ang_vel_z = RewTerm(func=mdp.recovery_stage_still_ang_vel_z_l2, weight=0.0)
+    recovery_still_wheel_vel = RewTerm(
+        func=mdp.recovery_stage_still_wheel_vel_l2,
+        weight=0.0,
+        params={"asset_cfg": SceneEntityCfg("robot", joint_names="")},
+    )
+    recovery_stage_wheel_vel = RewTerm(
+        func=mdp.recovery_stage_wheel_vel_l2,
+        weight=0.0,
+        params={"asset_cfg": SceneEntityCfg("robot", joint_names="")},
+    )
+    recovery_stage_wheel_torque = RewTerm(
+        func=mdp.recovery_stage_wheel_torque_l2,
+        weight=0.0,
+        params={"asset_cfg": SceneEntityCfg("robot", joint_names="")},
+    )
+    recovery_stage_base_lin_vel_z = RewTerm(
+        func=mdp.recovery_stage_base_lin_vel_z_l2,
+        weight=0.0,
+    )
+    recovery_stage_leg_length_vel = RewTerm(
+        func=mdp.recovery_stage_leg_length_vel_l2,
+        weight=0.0,
+        params={"leg_joint_names": None, "wheel_joint_names": None},
+    )
+    recovery_stage_command_base_height_under = RewTerm(
+        func=mdp.recovery_stage_command_base_height_under_l2,
+        weight=0.0,
+        params={"command_name": "base_velocity"},
+    )
+    recovery_stage_force_action = RewTerm(
+        func=mdp.recovery_stage_force_action_l2,
+        weight=0.0,
+        params={"action_name": "vmc"},
+    )
+    recovery_stage_force_action_symmetry = RewTerm(
+        func=mdp.recovery_stage_force_action_symmetry_l2,
+        weight=0.0,
+        params={"action_name": "vmc"},
+    )
+    recovery_zero_cmd_lin_vel_xy = RewTerm(
+        func=mdp.recovery_stage_zero_cmd_lin_vel_xy_l2,
+        weight=0.0,
+        params={"command_name": "base_velocity"},
+    )
+    recovery_zero_cmd_ang_vel_z = RewTerm(
+        func=mdp.recovery_stage_zero_cmd_ang_vel_z_l2,
+        weight=0.0,
+        params={"command_name": "base_velocity"},
+    )
+    recovery_zero_cmd_wheel_vel = RewTerm(
+        func=mdp.recovery_stage_zero_cmd_wheel_vel_l2,
+        weight=0.0,
+        params={"command_name": "base_velocity", "asset_cfg": SceneEntityCfg("robot", joint_names="")},
+    )
+    recovery_zero_cmd_wheel_action = RewTerm(
+        func=mdp.recovery_stage_zero_cmd_wheel_action_l2,
+        weight=0.0,
+        params={"command_name": "base_velocity", "action_name": "vmc"},
+    )
+    recovery_zero_cmd_force_action = RewTerm(
+        func=mdp.recovery_stage_zero_cmd_force_action_l2,
+        weight=0.0,
+        params={"command_name": "base_velocity", "action_name": "vmc"},
+    )
+
 
 @configclass
 class TerminationsCfg:
@@ -680,6 +778,14 @@ class TerminationsCfg:
     illegal_contact = DoneTerm(
         func=mdp.illegal_contact,
         params={"sensor_cfg": SceneEntityCfg("contact_forces", body_names=""), "threshold": 1.0},
+    )
+
+    non_finite_state = DoneTerm(
+        func=mdp.non_finite_state,
+        params={
+            "asset_cfg": SceneEntityCfg("robot"),
+            "sensor_cfg": SceneEntityCfg("contact_forces"),
+        },
     )
 
 
@@ -706,6 +812,8 @@ class CurriculumCfg:
             "threshold": 0.7,
         },
     )
+
+    recovery_stages = None
 
 
 ##

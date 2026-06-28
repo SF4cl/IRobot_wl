@@ -330,6 +330,7 @@ class WLVMCAction(ActionTerm):
 
     def __init__(self, cfg: "WLVMCActionCfg", env):
         super().__init__(cfg, env)
+        self._env = env
         self._raw_actions = torch.zeros(self.num_envs, self.action_dim, device=self.device)
         self._processed_actions = torch.zeros_like(self._raw_actions)
         self._delayed_actions = torch.zeros_like(self._raw_actions)
@@ -428,8 +429,20 @@ class WLVMCAction(ActionTerm):
         self._action_fifo[:, 0, :] = self._processed_actions
         self._delayed_actions[:] = self._action_fifo[torch.arange(self.num_envs, device=self.device), self._action_delay_idx]
 
+        actions_for_torque = self._delayed_actions
+        if self.cfg.zero_wheel_torque_until_upright:
+            actions_for_torque = actions_for_torque.clone()
+            projected_gravity_z = self._env.scene["robot"].data.projected_gravity_b[:, 2]
+            ramp_width = max(self.cfg.wheel_torque_upright_ramp_width, 1.0e-6)
+            wheel_gate = torch.clamp(
+                (self.cfg.wheel_torque_upright_threshold - projected_gravity_z) / ramp_width,
+                min=0.0,
+                max=1.0,
+            )
+            actions_for_torque[:, [2, 5]] *= wheel_gate.unsqueeze(1)
+
         torques = compute_vmc_action(
-            actions=self._delayed_actions,
+            actions=actions_for_torque,
             dof_pos=self._asset.data.joint_pos,
             dof_vel=self._asset.data.joint_vel,
             leg_joint_indices=self._leg_joint_ids,
@@ -511,5 +524,8 @@ class WLVMCActionCfg(ActionTermCfg):
     gain_randomization_range: tuple[float, float] = (0.9, 1.1)
     randomize_action_delay: bool = True
     action_delay_ms_range: tuple[float, float] = (0.0, 10.0)
+    zero_wheel_torque_until_upright: bool = True
+    wheel_torque_upright_threshold: float = -0.72
+    wheel_torque_upright_ramp_width: float = 0.18
 
 

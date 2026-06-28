@@ -266,28 +266,32 @@ def export_to_onnx(
         shape = [d.dim_value if d.dim_value else "dynamic" for d in out.type.tensor_type.shape.dim]
         print(f"       {out.name}: {shape} ({out.type.tensor_type.elem_type})")
 
-    # --- Sanity check: compare PyTorch vs ONNX outputs ---
-    import onnxruntime as ort
-    with torch.inference_mode():
-        pt_result = wrapper(dummy_obs, dummy_history)
-
-    ort_session = ort.InferenceSession(output_path)
-    ort_inputs = {
-        "observations": dummy_obs.numpy(),
-        "observation_history": dummy_history.numpy(),
-    }
-    if export_latent:
-        ort_actions, ort_latent = ort_session.run(None, ort_inputs)
-        max_diff_act = abs(pt_result[0].numpy() - ort_actions).max()
-        max_diff_lat = abs(pt_result[1].numpy() - ort_latent).max()
-        print(f"[INFO] Sanity check (dummy input):")
-        print(f"       max actions diff: {max_diff_act:.2e}")
-        print(f"       max latent diff:  {max_diff_lat:.2e}")
+    # --- Sanity check: compare PyTorch vs ONNX outputs when ONNXRuntime is available. ---
+    try:
+        import onnxruntime as ort
+    except ModuleNotFoundError:
+        print("[WARN] onnxruntime is not installed here; skipped PyTorch-vs-ONNX numeric sanity check.")
     else:
-        (ort_actions,) = ort_session.run(None, ort_inputs)
-        max_diff_act = abs(pt_result.numpy() - ort_actions).max()
-        print(f"[INFO] Sanity check (dummy input):")
-        print(f"       max actions diff: {max_diff_act:.2e}")
+        with torch.inference_mode():
+            pt_result = wrapper(dummy_obs, dummy_history)
+
+        ort_session = ort.InferenceSession(output_path)
+        ort_inputs = {
+            "observations": dummy_obs.numpy(),
+            "observation_history": dummy_history.numpy(),
+        }
+        if export_latent:
+            ort_actions, ort_latent = ort_session.run(None, ort_inputs)
+            max_diff_act = abs(pt_result[0].numpy() - ort_actions).max()
+            max_diff_lat = abs(pt_result[1].numpy() - ort_latent).max()
+            print(f"[INFO] Sanity check (dummy input):")
+            print(f"       max actions diff: {max_diff_act:.2e}")
+            print(f"       max latent diff:  {max_diff_lat:.2e}")
+        else:
+            (ort_actions,) = ort_session.run(None, ort_inputs)
+            max_diff_act = abs(pt_result.numpy() - ort_actions).max()
+            print(f"[INFO] Sanity check (dummy input):")
+            print(f"       max actions diff: {max_diff_act:.2e}")
 
     return output_path
 

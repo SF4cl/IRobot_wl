@@ -117,11 +117,11 @@ class WlSequenceRunner:
 
     def _as_float(self, value) -> float:
         if isinstance(value, torch.Tensor):
-            return float(value.detach().mean().cpu().item())
+            return float(value.detach().float().mean().cpu().item())
         return float(value)
 
     def _as_list(self, tensor: torch.Tensor) -> list[float]:
-        return [float(v) for v in tensor.detach().cpu().tolist()]
+        return [float(v) for v in tensor.detach().float().cpu().tolist()]
 
     def _leg_debug_stats(self) -> dict[str, torch.Tensor]:
         raw_actions = self.env.unwrapped.action_manager.action
@@ -369,6 +369,41 @@ class WlSequenceRunner:
                 stats[name] = float((value / max(max_episode_length_s, 1e-6)).detach().mean().cpu().item())
         return stats
 
+    def _finite_debug_stats(self) -> dict[str, torch.Tensor]:
+        robot = self._robot
+
+        def bad_envs(tensor: torch.Tensor) -> torch.Tensor:
+            return ~torch.isfinite(tensor).flatten(start_dim=1).all(dim=1)
+
+        root_bad = (
+            bad_envs(robot.data.root_pos_w)
+            | bad_envs(robot.data.root_quat_w)
+            | bad_envs(robot.data.root_lin_vel_w)
+            | bad_envs(robot.data.root_ang_vel_w)
+            | bad_envs(robot.data.projected_gravity_b)
+        )
+        joint_bad = bad_envs(robot.data.joint_pos) | bad_envs(robot.data.joint_vel)
+        bad = root_bad | joint_bad
+        stats = {
+            "root_nonfinite_env_count": root_bad.sum(),
+            "joint_nonfinite_env_count": joint_bad.sum(),
+        }
+
+        sensors = getattr(self.env.unwrapped.scene, "sensors", {})
+        if "contact_forces" in sensors:
+            contact_sensor = sensors["contact_forces"]
+            contact_bad = bad_envs(contact_sensor.data.net_forces_w_history)
+            stats["contact_nonfinite_env_count"] = contact_bad.sum()
+            bad = bad | contact_bad
+        else:
+            stats["contact_nonfinite_env_count"] = torch.zeros((), device=self.device)
+
+        stats["any_nonfinite_env_count"] = bad.sum()
+        bad_ids = torch.where(bad)[0]
+        first_bad = bad_ids[0] if bad_ids.numel() > 0 else torch.full((), -1, device=self.device, dtype=torch.long)
+        stats["first_nonfinite_env_id"] = first_bad
+        return stats
+
     def _write_diagnostics_jsonl(
         self,
         it: int,
@@ -384,12 +419,14 @@ class WlSequenceRunner:
     ):
         if self._diagnostics_path is None:
             return
+        finite_stats = self._finite_debug_stats()
         row = {
             "iteration": int(it),
             "total_timesteps": int(self.tot_timesteps),
             "fps": int(fps),
             "mean_reward": statistics.mean(rewbuffer) if len(rewbuffer) > 0 else None,
             "mean_episode_length": statistics.mean(lenbuffer) if len(lenbuffer) > 0 else None,
+            "recovery_stage": int(getattr(self.env.unwrapped, "_recovery_curriculum_stage", 0)),
             "loss": {
                 "value_function": float(mean_value_loss),
                 "surrogate": float(mean_surrogate_loss),
@@ -501,6 +538,13 @@ class WlSequenceRunner:
                 "total_force_cmd": self._as_list(leg_stats["total_force_cmd_env0"]),
             },
             "rewards_per_second": reward_stats,
+            "nonfinite": {
+                "any_env_count": self._as_float(finite_stats["any_nonfinite_env_count"]),
+                "root_env_count": self._as_float(finite_stats["root_nonfinite_env_count"]),
+                "joint_env_count": self._as_float(finite_stats["joint_nonfinite_env_count"]),
+                "contact_env_count": self._as_float(finite_stats["contact_nonfinite_env_count"]),
+                "first_env_id": self._as_float(finite_stats["first_nonfinite_env_id"]),
+            },
         }
         os.makedirs(os.path.dirname(self._diagnostics_path), exist_ok=True)
         with open(self._diagnostics_path, "a", encoding="utf-8") as file:
@@ -571,6 +615,13 @@ class WlSequenceRunner:
             self.writer.add_scalar(name, self._as_float(value), it)
         for name, value in reward_stats.items():
             self.writer.add_scalar(f"RewardDebug/{name}", value, it)
+        for name, value in self._finite_debug_stats().items():
+            self.writer.add_scalar(f"Diagnostics/{name}", self._as_float(value), it)
+        self.writer.add_scalar(
+            "Diagnostics/recovery_stage",
+            float(getattr(self.env.unwrapped, "_recovery_curriculum_stage", 0)),
+            it,
+        )
 
     def learn(self, num_learning_iterations, init_at_random_ep_len=False):
         print("[DEBUG][WlSequenceRunner] learn start")

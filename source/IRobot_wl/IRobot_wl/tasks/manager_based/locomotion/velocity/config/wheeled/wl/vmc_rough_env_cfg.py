@@ -591,6 +591,8 @@ class WLVMCVanillaRoughEnvCfg(LocomotionVelocityRoughEnvCfg):
         self.scene.terrain.terrain_generator = ROUGH_ROAD_CFG
 
         # ------------------------------Observations------------------------------
+        self.observations.policy.velocity_commands.func = mdp.wl_vmc_commands_with_recovery
+        self.observations.critic.velocity_commands.func = mdp.wl_vmc_commands_with_recovery
         self.observations.policy.velocity_commands.params["height_command"] = self.rewards.base_height_enhance.params["target_height"]
         self.observations.critic.velocity_commands.params["height_command"] = self.rewards.base_height_enhance.params["target_height"]
 
@@ -621,6 +623,9 @@ class WLVMCVanillaRoughEnvCfg(LocomotionVelocityRoughEnvCfg):
         self.actions.vmc.randomize_vmc_gains = True
         self.actions.vmc.randomize_action_delay = True
         self.actions.vmc.action_delay_ms_range = (0.0, 10.0)
+        self.actions.vmc.zero_wheel_torque_until_upright = True
+        self.actions.vmc.wheel_torque_upright_threshold = -0.72
+        self.actions.vmc.wheel_torque_upright_ramp_width = 0.18
 
         # ------------------------------Events------------------------------
         self.events.randomize_rigid_body_material.params["asset_cfg"].body_names = ".*"
@@ -631,7 +636,31 @@ class WLVMCVanillaRoughEnvCfg(LocomotionVelocityRoughEnvCfg):
         self.events.randomize_rigid_body_inertia.params["asset_cfg"].body_names = ".*"
         self.events.randomize_com_positions.params["asset_cfg"].body_names = [self.base_link_name]
         self.events.randomize_apply_external_force_torque.params["asset_cfg"].body_names = [self.base_link_name]
-        self.events.randomize_reset_joints.params["asset_cfg"].joint_names = self.joint_names
+        self.events.randomize_reset_base.func = mdp.reset_root_state_fallen
+        self.events.randomize_reset_base.params = {
+            "asset_cfg": SceneEntityCfg("robot", joint_names=self.joint_names),
+            "pose_range": {"x": (-0.3, 0.3), "y": (-0.3, 0.3)},
+            "velocity_range": {
+                "x": (-0.25, 0.25),
+                "y": (-0.25, 0.25),
+                "z": (-0.15, 0.15),
+                "roll": (-0.4, 0.4),
+                "pitch": (-0.4, 0.4),
+                "yaw": (-0.4, 0.4),
+            },
+            "joint_position_range": (-0.9, 0.9),
+            "joint_velocity_range": (-0.8, 0.8),
+            "fallen_probability": 1.0,
+            "ground_height_offset": 0.14,
+            "allow_random_orientation": True,
+            "body_half_extents": (0.24, 0.17, 0.10),
+            "spawn_height_margin": 0.06,
+            "max_fallen_spawn_height": 0.42,
+            "clamp_joint_positions": True,
+            "reject_near_upright_fallen": True,
+            "near_upright_projected_gravity_z": -0.55,
+        }
+        self.events.randomize_reset_joints = None
         self.events.randomize_actuator_gains.params["asset_cfg"].joint_names = self.joint_names
 
         # ------------------------------Rewards------------------------------
@@ -639,15 +668,30 @@ class WLVMCVanillaRoughEnvCfg(LocomotionVelocityRoughEnvCfg):
         self.rewards.is_terminated.weight = -200
 
         # Root penalties (WL-Gym style)
-        self.rewards.lin_vel_z_l2.weight = -2.0
-        self.rewards.ang_vel_xy_l2.weight = -0.05
-        self.rewards.flat_orientation_l2.weight = -10.0
-        self.rewards.base_height_l2.weight = 0
-        self.rewards.base_height_l2.params["target_height"] = 0.19
-        self.rewards.base_height_l2.params["sensor_cfg"] = None
-        self.rewards.base_height_l2.params["asset_cfg"].body_names = [self.base_link_name]
-        self.rewards.base_height_enhance.weight = 1.0
-        self.rewards.base_height_enhance.params["target_height"] = 0.19
+        self.rewards.lin_vel_z_l2.weight = -0.6
+        self.rewards.ang_vel_xy_l2.weight = -0.03
+        self.rewards.flat_orientation_l2.weight = 0.0
+        self.rewards.base_height_l2.weight = 1.0
+        self.rewards.base_height_l2.func = mdp.recovery_low_to_command_base_height_exp
+        self.rewards.base_height_l2.params = {
+            "command_name": "base_velocity",
+            "recovery_target_height": 0.155,
+            "fallback_target_height": 0.235,
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=[self.foot_link_name]),
+            "non_wheel_sensor_cfg": SceneEntityCfg(
+                "contact_forces", body_names=[f"^(?!.*{self.foot_link_name}).*"]
+            ),
+            "leg_joint_names": self.leg_joint_names,
+            "l1": self.vmc_actions.l1,
+            "l2": self.vmc_actions.l2,
+            "offset": self.vmc_actions.offset,
+            "theta1_offset": self.vmc_actions.theta1_offset,
+            "theta2_offset": self.vmc_actions.theta2_offset,
+            "asset_cfg": SceneEntityCfg("robot"),
+        }
+        self.rewards.base_height_enhance.weight = 0.0
+        self.rewards.self_right_orientation_l2.weight = -7.0
+        self.rewards.recovery_upright_progress.weight = 4.0
         self.rewards.theta0_nominal.weight = -0.3
         self.rewards.body_lin_acc_l2.weight = 0
 
@@ -669,9 +713,9 @@ class WLVMCVanillaRoughEnvCfg(LocomotionVelocityRoughEnvCfg):
         self.rewards.joint_vel_limits.weight = 0
         self.rewards.joint_power.weight = -2e-5
         self.rewards.joint_power.params["asset_cfg"].joint_names = self.leg_joint_names
-        self.rewards.stand_still.weight = -2.0
+        self.rewards.stand_still.weight = 0.0
         self.rewards.stand_still.params["asset_cfg"].joint_names = self.leg_joint_names
-        self.rewards.theta0_nominal.weight = -0.5
+        self.rewards.theta0_nominal.weight = 0.0
         self.rewards.theta0_nominal.params["leg_joint_names"] = self.leg_joint_names
         self.rewards.wheel_vel_penalty.weight = -0.01
         self.rewards.wheel_vel_penalty.params["sensor_cfg"].body_names = [self.foot_link_name]
@@ -681,25 +725,99 @@ class WLVMCVanillaRoughEnvCfg(LocomotionVelocityRoughEnvCfg):
             ["rf0_Joint", "lf0_Joint"],
             ["rf1_Joint", "lf1_Joint"],
         ]
-        self.rewards.leg_angle_symmetry.weight = -1.3
-        self.rewards.leg_length_symmetry.weight = -4.0
+        self.rewards.leg_angle_symmetry.weight = 0.0
+        self.rewards.leg_length_symmetry.weight = 0.0
         self.rewards.vmc_action_symmetry.weight = -0.25
+        self.rewards.recovery_stand_min_leg_length.weight = -18.0
+        self.rewards.recovery_stand_min_leg_length.params = {
+            "target_length": self.vmc_actions.l0_min,
+            "leg_joint_names": self.leg_joint_names,
+            "wheel_sensor_cfg": SceneEntityCfg("contact_forces", body_names=[self.foot_link_name]),
+            "l1": self.vmc_actions.l1,
+            "l2": self.vmc_actions.l2,
+            "offset": self.vmc_actions.offset,
+            "theta1_offset": self.vmc_actions.theta1_offset,
+            "theta2_offset": self.vmc_actions.theta2_offset,
+        }
+        self.rewards.recovery_stand_theta0.weight = -7.0
+        self.rewards.recovery_stand_theta0.params = {
+            "leg_joint_names": self.leg_joint_names,
+            "wheel_sensor_cfg": SceneEntityCfg("contact_forces", body_names=[self.foot_link_name]),
+            "l1": self.vmc_actions.l1,
+            "l2": self.vmc_actions.l2,
+            "offset": self.vmc_actions.offset,
+            "theta1_offset": self.vmc_actions.theta1_offset,
+            "theta2_offset": self.vmc_actions.theta2_offset,
+        }
+        self.rewards.recovery_stand_wheel_contact.weight = 2.0
+        self.rewards.recovery_stand_wheel_contact.params["sensor_cfg"].body_names = [self.foot_link_name]
+        self.rewards.recovery_stand_wheel_load.weight = 1.5
+        self.rewards.recovery_stand_wheel_load.params["sensor_cfg"].body_names = [self.foot_link_name]
+        self.rewards.recovery_wheel_only_contact.weight = -4.0
+        self.rewards.recovery_wheel_only_contact.params["sensor_cfg"].body_names = [
+            f"^(?!.*{self.foot_link_name}).*"
+        ]
 
         # Action penalties
         self.rewards.action_rate_l2.weight = -0.01
         # self.rewards.action_smooth.weight = 0  # disabled, not in WLVMCVanillaRewardsCfg
 
         # Contact sensor
-        self.rewards.undesired_contacts.weight = -1.0
+        self.rewards.undesired_contacts.weight = 0.0
         self.rewards.undesired_contacts.params["sensor_cfg"].body_names = [f"^(?!.*{self.foot_link_name}).*"]
         self.rewards.contact_forces.weight = -1.5e-4
         self.rewards.contact_forces.params["sensor_cfg"].body_names = [self.foot_link_name]
 
         # Velocity-tracking rewards (WL-Gym style with std=0.25)
+        self.rewards.track_lin_vel_xy_exp.func = mdp.recovery_gated_ref_track_lin_vel_exp
         self.rewards.track_lin_vel_xy_exp.weight = 1.0
+        self.rewards.track_lin_vel_xy_exp.params = {
+            "command_name": "base_velocity",
+            "tracking_sigma": 0.25,
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=[self.foot_link_name]),
+            "non_wheel_sensor_cfg": SceneEntityCfg(
+                "contact_forces", body_names=[f"^(?!.*{self.foot_link_name}).*"]
+            ),
+            "leg_joint_names": self.leg_joint_names,
+            "l1": self.vmc_actions.l1,
+            "l2": self.vmc_actions.l2,
+            "offset": self.vmc_actions.offset,
+            "theta1_offset": self.vmc_actions.theta1_offset,
+            "theta2_offset": self.vmc_actions.theta2_offset,
+        }
+        self.rewards.track_ang_vel_z_exp.func = mdp.recovery_gated_ref_track_ang_vel_exp
         self.rewards.track_ang_vel_z_exp.weight = 1.0
-        self.rewards.tracking_lin_vel_enhance.weight = 1.0
-        self.rewards.tracking_ang_vel_enhance.weight = 1.0
+        self.rewards.track_ang_vel_z_exp.params = {
+            "command_name": "base_velocity",
+            "tracking_sigma": 0.25,
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=[self.foot_link_name]),
+            "non_wheel_sensor_cfg": SceneEntityCfg(
+                "contact_forces", body_names=[f"^(?!.*{self.foot_link_name}).*"]
+            ),
+            "leg_joint_names": self.leg_joint_names,
+            "l1": self.vmc_actions.l1,
+            "l2": self.vmc_actions.l2,
+            "offset": self.vmc_actions.offset,
+            "theta1_offset": self.vmc_actions.theta1_offset,
+            "theta2_offset": self.vmc_actions.theta2_offset,
+        }
+        self.rewards.tracking_lin_vel_enhance.func = mdp.recovery_gated_ref_track_lin_vel_enhance
+        self.rewards.tracking_lin_vel_enhance.weight = 0.7
+        self.rewards.tracking_lin_vel_enhance.params = {
+            "command_name": "base_velocity",
+            "tracking_sigma": 0.25,
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=[self.foot_link_name]),
+            "non_wheel_sensor_cfg": SceneEntityCfg(
+                "contact_forces", body_names=[f"^(?!.*{self.foot_link_name}).*"]
+            ),
+            "leg_joint_names": self.leg_joint_names,
+            "l1": self.vmc_actions.l1,
+            "l2": self.vmc_actions.l2,
+            "offset": self.vmc_actions.offset,
+            "theta1_offset": self.vmc_actions.theta1_offset,
+            "theta2_offset": self.vmc_actions.theta2_offset,
+        }
+        self.rewards.tracking_ang_vel_enhance.weight = 0.0
         self.rewards.track_lin_vel_enhance.weight = 0.0
         self.rewards.track_ang_vel_enhance.weight = 0.0
 
@@ -724,7 +842,7 @@ class WLVMCVanillaRoughEnvCfg(LocomotionVelocityRoughEnvCfg):
         self.rewards.feet_height_body.params["asset_cfg"].body_names = [self.foot_link_name]
         self.rewards.feet_gait.weight = 0
         self.rewards.feet_gait.params["synced_feet_pair_names"] = (("l_wheel_Joint", "r_wheel_Joint"),)
-        self.rewards.upward.weight = 1.0
+        self.rewards.upward.weight = 0.0
         self.rewards.feet_distance_y_exp.weight = 1.5
         self.rewards.feet_distance_y_exp.params["stance_width"] = 0.34
         self.rewards.feet_distance_y_exp.params["asset_cfg"].body_names = [self.foot_link_name]
@@ -734,11 +852,7 @@ class WLVMCVanillaRoughEnvCfg(LocomotionVelocityRoughEnvCfg):
             self.disable_zero_weight_rewards()
 
         # ------------------------------Terminations------------------------------
-        self.terminations.illegal_contact.params["sensor_cfg"].body_names = [
-            self.base_link_name,
-            ".*f0_Link",
-            ".*f1_Link",
-        ]
+        self.terminations.illegal_contact = None
 
         # ------------------------------Curriculums------------------------------
         self.curriculum.command_levels_lin_vel.params["reward_term_name"] = "track_lin_vel_xy_exp"
@@ -747,11 +861,14 @@ class WLVMCVanillaRoughEnvCfg(LocomotionVelocityRoughEnvCfg):
         self.curriculum.command_levels_ang_vel.params["threshold"] = 0.7
 
         # ------------------------------Commands------------------------------
+        self.commands.base_velocity.class_type = mdp.ContinuousHeightVelocityCommand
         self.commands.base_velocity.resampling_time_range = (5.0, 5.0)
-        self.commands.base_velocity.ranges.lin_vel_x = (1.0, 1.0)
+        self.commands.base_velocity.base_height_range = (0.19, 0.28)
+        self.commands.base_velocity.ranges.lin_vel_x = (-1.5, 1.5)
         self.commands.base_velocity.ranges.lin_vel_y = (0.0, 0.0)
-        self.commands.base_velocity.ranges.ang_vel_z = (-3.14, 3.14)
-        self.commands.base_velocity.heading_command = True
+        self.commands.base_velocity.ranges.ang_vel_z = (-1.0, 1.0)
+        self.commands.base_velocity.heading_command = False
+        self.commands.base_velocity.rel_heading_envs = 0.0
 
 
 def compute_vmc_torques_from_actions(env, actions: torch.Tensor) -> torch.Tensor:

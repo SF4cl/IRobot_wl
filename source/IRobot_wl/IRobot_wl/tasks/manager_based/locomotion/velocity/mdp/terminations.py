@@ -39,3 +39,28 @@ def sustained_flat_failure(
 
     required_steps = max(1, int(round(hold_time_s / env.step_dt)))
     return counter > required_steps
+
+
+def non_finite_state(
+    env: ManagerBasedRLEnv,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    sensor_cfg: SceneEntityCfg | None = None,
+) -> torch.Tensor:
+    """Terminate environments whose simulation state has become NaN or Inf."""
+    asset = env.scene[asset_cfg.name]
+    bad = (
+        ~torch.isfinite(asset.data.root_pos_w).all(dim=1)
+        | ~torch.isfinite(asset.data.root_quat_w).all(dim=1)
+        | ~torch.isfinite(asset.data.root_lin_vel_w).all(dim=1)
+        | ~torch.isfinite(asset.data.root_ang_vel_w).all(dim=1)
+        | ~torch.isfinite(asset.data.projected_gravity_b).all(dim=1)
+        | ~torch.isfinite(asset.data.joint_pos).all(dim=1)
+        | ~torch.isfinite(asset.data.joint_vel).all(dim=1)
+    )
+    if sensor_cfg is not None and sensor_cfg.name in env.scene.sensors:
+        sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+        forces = sensor.data.net_forces_w_history
+        if sensor_cfg.body_ids != slice(None):
+            forces = forces[:, :, sensor_cfg.body_ids]
+        bad = bad | ~torch.isfinite(forces).flatten(start_dim=1).all(dim=1)
+    return bad

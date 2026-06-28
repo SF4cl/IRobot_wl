@@ -162,3 +162,40 @@ def command_levels_ang_vel(
             base_velocity_ranges.ang_vel_z = new_ang_vel_z.tolist()
 
     return torch.tensor(base_velocity_ranges.ang_vel_z[1], device=env.device)
+
+
+def recovery_staged_curriculum(
+    env: ManagerBasedRLEnv,
+    env_ids: Sequence[int],
+    stage_steps: Sequence[int] = (300, 900, 1500, 2100),
+    rollout_steps_per_iteration: int = 96,
+    iteration_offset_attr: str = "_recovery_curriculum_iteration_offset",
+) -> torch.Tensor:
+    """Expose a simple global recovery stage for resets and reward gates.
+
+    Stages:
+      0: easy self-righting from side/front/back falls.
+      1: harder self-righting and wheel-under-body stand-up.
+      2: mixed random orientations, still dominated by recovery.
+      3: stage2.5 static stabilization after recovery.
+      4: full recovery-to-locomotion objective.
+    """
+    del env_ids
+    iteration_offset = int(getattr(env, iteration_offset_attr, 0))
+    learning_iteration = int(env.common_step_counter // max(int(rollout_steps_per_iteration), 1)) + iteration_offset
+    if len(stage_steps) < 4:
+        raise ValueError("stage_steps must contain four iteration thresholds.")
+
+    if learning_iteration < stage_steps[0]:
+        stage = 0
+    elif learning_iteration < stage_steps[1]:
+        stage = 1
+    elif learning_iteration < stage_steps[2]:
+        stage = 2
+    elif learning_iteration < stage_steps[3]:
+        stage = 3
+    else:
+        stage = 4
+
+    env._recovery_curriculum_stage = stage
+    return torch.tensor(float(stage), device=env.device)

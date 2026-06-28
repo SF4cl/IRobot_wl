@@ -106,6 +106,7 @@ import gymnasium as gym
 import torch
 from rsl_rl.runners import DistillationRunner, OnPolicyRunner
 
+import isaaclab.utils.math as math_utils
 from isaaclab.devices import Se2Keyboard, Se2KeyboardCfg
 from isaaclab.envs import (
     DirectMARLEnv,
@@ -114,7 +115,6 @@ from isaaclab.envs import (
     ManagerBasedRLEnvCfg,
     multi_agent_to_single_agent,
 )
-from isaaclab.managers import ObservationTermCfg as ObsTerm
 from isaaclab.utils.assets import retrieve_file_path
 from isaaclab.utils.dict import print_dict
 
@@ -184,58 +184,95 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         env_cfg.scene.num_envs = 1
         env_cfg.terminations.time_out = None
         env_cfg.commands.base_velocity.debug_vis = False
+        policy_velocity_term = env_cfg.observations.policy.velocity_commands
+        velocity_term_params = dict(getattr(policy_velocity_term, "params", {}) or {})
+        default_height_command = float(velocity_term_params.get("height_command", 0.25))
+        original_velocity_obs_terms = {
+            "policy": (
+                env_cfg.observations.policy.velocity_commands.func,
+                dict(getattr(env_cfg.observations.policy.velocity_commands, "params", {}) or {}),
+            )
+        }
+        if hasattr(env_cfg.observations, "policy_history"):
+            original_velocity_obs_terms["policy_history"] = (
+                env_cfg.observations.policy_history.velocity_commands.func,
+                dict(getattr(env_cfg.observations.policy_history.velocity_commands, "params", {}) or {}),
+            )
+        if hasattr(env_cfg.observations, "critic"):
+            original_velocity_obs_terms["critic"] = (
+                env_cfg.observations.critic.velocity_commands.func,
+                dict(getattr(env_cfg.observations.critic.velocity_commands, "params", {}) or {}),
+            )
+        max_lin_vel_x = max(abs(v) for v in env_cfg.commands.base_velocity.ranges.lin_vel_x)
+        heading_step_rate = 1.0
         config = Se2KeyboardCfg(
-            v_x_sensitivity=env_cfg.commands.base_velocity.ranges.lin_vel_x[1],
-            v_y_sensitivity=env_cfg.commands.base_velocity.ranges.lin_vel_y[1],
-            omega_z_sensitivity=env_cfg.commands.base_velocity.ranges.ang_vel_z[1],
+            # Use gentler commands than the full task range so each key press stays
+            # close to the policy's typical training distribution.
+            v_x_sensitivity=min(0.8, max_lin_vel_x),
+            v_y_sensitivity=0.0,
+            omega_z_sensitivity=heading_step_rate,
         )
         keyboard_controller = Se2Keyboard(config)
         keyboard_controller.reset()
         print(keyboard_controller)
+        keyboard_heading_target = {"value": None}
 
-        def keyboard_vmc_command_obs(env):
+        def update_keyboard_command(env):
             step = int(getattr(env, "common_step_counter", 0))
-            if keyboard_command_cache["step"] != step or keyboard_command_cache["obs"] is None:
+            if keyboard_command_cache["step"] != step:
                 keyboard_cmd = keyboard_controller.advance().to(env.device).unsqueeze(0)
                 command = torch.zeros((env.num_envs, 3), device=env.device, dtype=keyboard_cmd.dtype)
                 command[:, 0] = keyboard_cmd[:, 0]
-                command[:, 2] = keyboard_cmd[:, 2]
 
                 # Keep the command manager in sync so debug arrows, logging, and
                 # any command-dependent terms see the same command as the policy.
                 command_term = env.command_manager.get_term("base_velocity")
+                if keyboard_heading_target["value"] is None:
+                    keyboard_heading_target["value"] = env.scene["robot"].data.heading_w.clone()
+                keyboard_heading_target["value"] = math_utils.wrap_to_pi(
+                    keyboard_heading_target["value"] + keyboard_cmd[:, 2] * env.step_dt
+                )
+                if hasattr(command_term, "heading_target"):
+                    command_term.heading_target[:] = keyboard_heading_target["value"]
+                if hasattr(command_term, "base_height_command_b"):
+                    command_term.base_height_command_b[:] = default_height_command
+                heading_error = math_utils.wrap_to_pi(
+                    keyboard_heading_target["value"] - env.scene["robot"].data.heading_w
+                )
+                heading_control_stiffness = getattr(command_term.cfg, "heading_control_stiffness", 1.0)
+                min_yaw, max_yaw = env_cfg.commands.base_velocity.ranges.ang_vel_z
+                command[:, 2] = torch.clamp(heading_control_stiffness * heading_error, min=min_yaw, max=max_yaw)
                 if hasattr(command_term, "vel_command_b"):
                     command_term.vel_command_b[:] = command
                 if hasattr(command_term, "is_standing_env"):
                     command_term.is_standing_env[:] = torch.linalg.norm(command[:, [0, 2]], dim=1) < 1.0e-6
                 if hasattr(command_term, "is_heading_env"):
-                    command_term.is_heading_env[:] = False
+                    command_term.is_heading_env[:] = True
 
                 keyboard_command_cache["step"] = step
                 keyboard_command_cache["raw"] = keyboard_cmd
-                if hasattr(env.cfg, "vmc_actions"):
-                    height_cmd = torch.full_like(command[:, 0], 0.23)
-                    keyboard_command_cache["obs"] = torch.stack(
-                        [command[:, 0] * 2.0, command[:, 2] * 0.25, height_cmd * 5.0],
-                        dim=1,
-                    )
-                else:
-                    keyboard_command_cache["obs"] = command
-            # VMC policies were trained with [lin_x * 2, yaw * 0.25, height * 5],
-            # not raw SE(2) [vx, vy, omega].
-            return keyboard_command_cache["obs"]
+                keyboard_command_cache["obs"] = {}
 
-        env_cfg.observations.policy.velocity_commands = ObsTerm(
-            func=keyboard_vmc_command_obs,
-        )
+        def make_keyboard_command_obs(group_name):
+            original_func, original_params = original_velocity_obs_terms[group_name]
+
+            def keyboard_command_obs(env):
+                update_keyboard_command(env)
+                group_cache = keyboard_command_cache["obs"]
+                if group_name not in group_cache:
+                    group_cache[group_name] = original_func(env, **original_params)
+                return group_cache[group_name]
+
+            return keyboard_command_obs
+
+        env_cfg.observations.policy.velocity_commands.func = make_keyboard_command_obs("policy")
+        env_cfg.observations.policy.velocity_commands.params = {}
         if hasattr(env_cfg.observations, "policy_history"):
-            env_cfg.observations.policy_history.velocity_commands = ObsTerm(
-                func=keyboard_vmc_command_obs,
-            )
+            env_cfg.observations.policy_history.velocity_commands.func = make_keyboard_command_obs("policy_history")
+            env_cfg.observations.policy_history.velocity_commands.params = {}
         if hasattr(env_cfg.observations, "critic"):
-            env_cfg.observations.critic.velocity_commands = ObsTerm(
-                func=keyboard_vmc_command_obs,
-            )
+            env_cfg.observations.critic.velocity_commands.func = make_keyboard_command_obs("critic")
+            env_cfg.observations.critic.velocity_commands.params = {}
 
     # specify directory for logging experiments
     log_root_path = os.path.join("logs", "rsl_rl", agent_cfg.experiment_name)
@@ -380,9 +417,9 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         print("#" * w)
         print(f" Step debug (Env0)")
         print(f"  Base lin vel [x,y,z]:      {_fmt(base_lin_vel[0])}")
-        print(f"  Commands   [x,yaw,head]:   {_fmt(commands[0])}")
+        print(f"  Commands   [vx,vy,omega]:  {_fmt(commands[0])}")
         if keyboard_cmd is not None:
-            print(f"  Keyboard   [vx,vy,yaw]:    {_fmt(keyboard_cmd[0])}")
+            print(f"  Keyboard   [vx,vy,head]:   {_fmt(keyboard_cmd[0])}")
         print(f"  --- VMC task space ---")
         print(f"  theta0     [L, R]:         {_fmt(vmc_state['theta0'][0])}")
         print(f"  L0         [L, R]:         {_fmt(vmc_state['L0'][0])}")
