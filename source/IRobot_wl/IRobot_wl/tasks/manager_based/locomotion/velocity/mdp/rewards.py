@@ -112,8 +112,6 @@ def recovery_run_gate(
     min_each_wheel_load_n: float = 12.0,
     theta0_threshold: float = 0.35,
     theta0_ramp: float = 0.55,
-    target_leg_length: float = 0.125,
-    leg_length_margin: float = 0.04,
     non_wheel_contact_threshold: float = 2.0,
     leg_joint_names: list[str] | None = None,
     non_wheel_sensor_cfg: SceneEntityCfg | None = None,
@@ -140,14 +138,12 @@ def recovery_run_gate(
 
     leg_gate = torch.ones_like(upright_gate)
     if leg_joint_names is not None:
-        leg_length, theta0 = _recovery_stand_leg_state(
+        _, theta0 = _recovery_stand_leg_state(
             env, leg_joint_names, l1, l2, offset, theta1_offset, theta2_offset, asset_cfg
         )
         theta_excess = torch.clamp(torch.max(torch.abs(theta0), dim=1).values - theta0_threshold, min=0.0)
         theta_gate = torch.clamp(1.0 - theta_excess / max(theta0_ramp, 1.0e-6), 0.0, 1.0)
-        length_excess = torch.clamp(torch.max(leg_length, dim=1).values - (target_leg_length + leg_length_margin), min=0.0)
-        length_gate = torch.clamp(1.0 - length_excess / max(leg_length_margin, 1.0e-6), 0.0, 1.0)
-        leg_gate = theta_gate * length_gate
+        leg_gate = theta_gate
 
     wheel_only_gate = torch.ones_like(upright_gate)
     if non_wheel_sensor_cfg is not None:
@@ -1996,6 +1992,8 @@ def recovery_stand_leg_length_l2(
 def recovery_stand_min_leg_length_l2(
     env: ManagerBasedRLEnv,
     target_length: float = 0.125,
+    min_stage: int = 0,
+    max_stage: int | None = 3,
     upright_threshold: float = -0.85,
     fallen_threshold: float = -0.35,
     leg_joint_names: list[str] | None = None,
@@ -2011,9 +2009,9 @@ def recovery_stand_min_leg_length_l2(
     leg_length, _ = _recovery_stand_leg_state(
         env, leg_joint_names, l1, l2, offset, theta1_offset, theta2_offset, asset_cfg
     )
+    stage_gate = recovery_curriculum_gate(env, min_stage=min_stage, max_stage=max_stage)
     phase = recovery_stand_upright_factor(env, upright_threshold, fallen_threshold, asset_cfg)
-    run_gate = recovery_run_gate(env, sensor_cfg=wheel_sensor_cfg, asset_cfg=asset_cfg)
-    return phase * (1.0 - run_gate) * torch.mean(torch.square(leg_length - target_length), dim=1)
+    return stage_gate * phase * torch.mean(torch.square(leg_length - target_length), dim=1)
 
 
 def recovery_stand_leg_symmetry_l2(
@@ -2040,6 +2038,8 @@ def recovery_stand_leg_symmetry_l2(
 
 def recovery_stand_theta0_l2(
     env: ManagerBasedRLEnv,
+    min_stage: int = 0,
+    max_stage: int | None = 3,
     upright_threshold: float = -0.85,
     fallen_threshold: float = -0.35,
     leg_joint_names: list[str] | None = None,
@@ -2056,9 +2056,9 @@ def recovery_stand_theta0_l2(
         env, leg_joint_names, l1, l2, offset, theta1_offset, theta2_offset, asset_cfg
     )
 
+    stage_gate = recovery_curriculum_gate(env, min_stage=min_stage, max_stage=max_stage)
     phase = recovery_stand_upright_factor(env, upright_threshold, fallen_threshold, asset_cfg)
-    run_gate = recovery_run_gate(env, sensor_cfg=wheel_sensor_cfg, asset_cfg=asset_cfg)
-    return phase * (1.0 - run_gate) * torch.mean(torch.square(theta0), dim=1)
+    return stage_gate * phase * torch.mean(torch.square(theta0), dim=1)
 
 
 def recovery_stand_theta0_worst_l2(

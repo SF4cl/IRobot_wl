@@ -199,3 +199,50 @@ def recovery_staged_curriculum(
 
     env._recovery_curriculum_stage = stage
     return torch.tensor(float(stage), device=env.device)
+
+
+def command_levels_base_height(
+    env: ManagerBasedRLEnv,
+    env_ids: Sequence[int],
+    initial_range: Sequence[float] = (0.19, 0.22),
+    final_range: Sequence[float] = (0.19, 0.28),
+    step_size: float = 0.02,
+    update_interval_iterations: int = 300,
+    rollout_steps_per_iteration: int = 96,
+    iteration_offset_attr: str = "_recovery_curriculum_iteration_offset",
+    reset_existing_commands: bool = True,
+) -> torch.Tensor:
+    """Gradually expand the sampled base-height command range during stage4 training."""
+    del env_ids
+    command_term = env.command_manager.get_term("base_velocity")
+    cfg = command_term.cfg
+
+    if len(initial_range) != 2 or len(final_range) != 2:
+        raise ValueError("initial_range and final_range must contain two values.")
+
+    initial = torch.tensor(initial_range, device=env.device, dtype=torch.float32)
+    final = torch.tensor(final_range, device=env.device, dtype=torch.float32)
+    if torch.any(initial > final):
+        raise ValueError("initial_range must not exceed final_range elementwise.")
+
+    iteration_offset = int(getattr(env, iteration_offset_attr, 0))
+    learning_iteration = int(env.common_step_counter // max(int(rollout_steps_per_iteration), 1)) + iteration_offset
+    offset_name = "_base_height_curriculum_iteration_offset"
+    start_name = "_base_height_curriculum_stage4_start"
+    previous_offset = getattr(env, offset_name, None)
+    if previous_offset != iteration_offset:
+        setattr(env, offset_name, iteration_offset)
+        setattr(env, start_name, iteration_offset)
+    stage4_start = int(getattr(env, start_name, iteration_offset))
+
+    interval = max(int(update_interval_iterations), 1)
+    levels = max((learning_iteration - stage4_start) // interval, 0)
+    new_range = torch.minimum(initial + levels * float(step_size), final)
+    range_tuple = (float(new_range[0].item()), float(new_range[1].item()))
+    old_range = tuple(float(x) for x in getattr(cfg, "base_height_range", final_range))
+    cfg.base_height_range = range_tuple
+
+    if reset_existing_commands and old_range != range_tuple and hasattr(command_term, "base_height_command_b"):
+        command_term.base_height_command_b.clamp_(min=range_tuple[0], max=range_tuple[1])
+
+    return torch.tensor(range_tuple[1], device=env.device)

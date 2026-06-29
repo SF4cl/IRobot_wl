@@ -45,7 +45,7 @@ class WLVMCVanillaFlatEnvCfg(WLVMCVanillaRoughEnvCfg):
         self.rewards.ang_vel_xy_l2.weight = -0.05
         self.rewards.flat_orientation_l2.weight = -10.0
 
-        self.rewards.base_height_l2.weight = 2.2
+        self.rewards.base_height_l2.weight = 3.0
         self.rewards.base_height_l2.func = mdp.recovery_low_to_command_base_height_exp
         self.rewards.base_height_l2.params = {
             "command_name": "base_velocity",
@@ -253,7 +253,7 @@ class WLVMCVanillaFlatEnvCfg(WLVMCVanillaRoughEnvCfg):
             "theta1_offset": self.vmc_actions.theta1_offset,
             "theta2_offset": self.vmc_actions.theta2_offset,
         }
-        self.rewards.recovery_stage_command_base_height_under.weight = -220.0
+        self.rewards.recovery_stage_command_base_height_under.weight = -1200.0
         self.rewards.recovery_stage_command_base_height_under.params = {
             "command_name": "base_velocity",
             "min_stage": 4,
@@ -356,6 +356,15 @@ class WLVMCVanillaFlatEnvCfg(WLVMCVanillaRoughEnvCfg):
         self.curriculum.command_levels_lin_vel.params["step_size"] = 0.1
         self.curriculum.command_levels_lin_vel.params["update_interval_s"] = 100.0
         self.curriculum.command_levels_ang_vel = None
+        self.curriculum.command_levels_base_height = CurrTerm(
+            func=mdp.command_levels_base_height,
+            params={
+                "initial_range": (0.19, 0.22),
+                "final_range": (0.19, 0.28),
+                "step_size": 0.02,
+                "update_interval_iterations": 300,
+            },
+        )
 
         # Reference-like reset robustness, without an extra reset impulse.
         self.events.randomize_apply_external_force_torque = None
