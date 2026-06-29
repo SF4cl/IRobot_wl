@@ -724,8 +724,18 @@ class RewardsCfg:
         weight=0.0,
         params={"command_name": "base_velocity"},
     )
+    recovery_stage_command_base_height = RewTerm(
+        func=mdp.recovery_stage_command_base_height_l2,
+        weight=0.0,
+        params={"command_name": "base_velocity"},
+    )
     recovery_stage_force_action = RewTerm(
         func=mdp.recovery_stage_force_action_l2,
+        weight=0.0,
+        params={"action_name": "vmc"},
+    )
+    recovery_stage_force_action_rate = RewTerm(
+        func=mdp.recovery_stage_force_action_rate_l2,
         weight=0.0,
         params={"action_name": "vmc"},
     )

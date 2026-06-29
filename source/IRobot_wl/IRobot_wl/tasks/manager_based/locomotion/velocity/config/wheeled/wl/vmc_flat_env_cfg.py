@@ -41,7 +41,7 @@ class WLVMCVanillaFlatEnvCfg(WLVMCVanillaRoughEnvCfg):
 
         # Reference Wheel-Legged-Gym reward set.
         self.rewards.is_terminated.weight = 0.0
-        self.rewards.lin_vel_z_l2.weight = -3.0
+        self.rewards.lin_vel_z_l2.weight = -4.0
         self.rewards.ang_vel_xy_l2.weight = -0.05
         self.rewards.flat_orientation_l2.weight = -10.0
 
@@ -234,13 +234,13 @@ class WLVMCVanillaFlatEnvCfg(WLVMCVanillaRoughEnvCfg):
             "min_stage": 4,
             "asset_cfg": SceneEntityCfg("robot", joint_names=self.wheel_joint_names),
         }
-        self.rewards.recovery_stage_base_lin_vel_z.weight = -4.0
+        self.rewards.recovery_stage_base_lin_vel_z.weight = -8.0
         self.rewards.recovery_stage_base_lin_vel_z.params = {
             "min_stage": 4,
             "start_time_s": 0.5,
             "ramp_time_s": 1.0,
         }
-        self.rewards.recovery_stage_leg_length_vel.weight = -0.08
+        self.rewards.recovery_stage_leg_length_vel.weight = -0.25
         self.rewards.recovery_stage_leg_length_vel.params = {
             "min_stage": 4,
             "start_time_s": 0.5,
@@ -262,8 +262,24 @@ class WLVMCVanillaFlatEnvCfg(WLVMCVanillaRoughEnvCfg):
             "start_time_s": 0.5,
             "ramp_time_s": 1.0,
         }
+        self.rewards.recovery_stage_command_base_height.weight = -800.0
+        self.rewards.recovery_stage_command_base_height.params = {
+            "command_name": "base_velocity",
+            "min_stage": 4,
+            "fallback_target_height": 0.235,
+            "margin": 0.004,
+            "start_time_s": 0.5,
+            "ramp_time_s": 1.0,
+        }
         self.rewards.recovery_stage_force_action.weight = -0.01
         self.rewards.recovery_stage_force_action.params = {
+            "action_name": "vmc",
+            "min_stage": 4,
+            "start_time_s": 0.5,
+            "ramp_time_s": 1.0,
+        }
+        self.rewards.recovery_stage_force_action_rate.weight = -0.08
+        self.rewards.recovery_stage_force_action_rate.params = {
             "action_name": "vmc",
             "min_stage": 4,
             "start_time_s": 0.5,

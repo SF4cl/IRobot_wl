@@ -2553,6 +2553,30 @@ def recovery_stage_command_base_height_under_l2(
     return stage_gate * time_gate * torch.square(under_error)
 
 
+def recovery_stage_command_base_height_l2(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    min_stage: int = 4,
+    max_stage: int | None = None,
+    fallback_target_height: float = 0.235,
+    margin: float = 0.004,
+    start_time_s: float = 0.5,
+    ramp_time_s: float = 1.0,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Penalize symmetric base-height error around the sampled command in the run stage."""
+    command_term = env.command_manager.get_term(command_name)
+    sampled_target = getattr(command_term, "base_height_command_b", None)
+    if sampled_target is None:
+        sampled_target = torch.full((env.num_envs,), fallback_target_height, device=env.device)
+
+    asset: Articulation = env.scene[asset_cfg.name]
+    stage_gate = recovery_curriculum_gate(env, min_stage=min_stage, max_stage=max_stage)
+    time_gate = _recovery_stand_time_gate(env, start_time_s=start_time_s, ramp_time_s=ramp_time_s)
+    error = torch.clamp(torch.abs(asset.data.root_pos_w[:, 2] - sampled_target) - margin, min=0.0)
+    return stage_gate * time_gate * torch.square(error)
+
+
 def recovery_stage_force_action_l2(
     env: ManagerBasedRLEnv,
     action_name: str = "vmc",
@@ -2567,6 +2591,25 @@ def recovery_stage_force_action_l2(
     stage_gate = recovery_curriculum_gate(env, min_stage=min_stage, max_stage=max_stage)
     time_gate = _recovery_stand_time_gate(env, start_time_s=start_time_s, ramp_time_s=ramp_time_s)
     return stage_gate * time_gate * torch.mean(torch.square(actions[:, [1, 4]]), dim=1)
+
+
+def recovery_stage_force_action_rate_l2(
+    env: ManagerBasedRLEnv,
+    action_name: str = "vmc",
+    min_stage: int = 4,
+    max_stage: int | None = None,
+    start_time_s: float = 0.5,
+    ramp_time_s: float = 1.0,
+) -> torch.Tensor:
+    """Penalize rapid changes in the two axial-force action channels in the run stage."""
+    action_term = env.action_manager.get_term(action_name)
+    actions = getattr(action_term, "processed_actions", action_term.raw_actions)
+    previous = getattr(action_term, "previous_actions", None)
+    if previous is None:
+        return torch.zeros(env.num_envs, device=env.device)
+    stage_gate = recovery_curriculum_gate(env, min_stage=min_stage, max_stage=max_stage)
+    time_gate = _recovery_stand_time_gate(env, start_time_s=start_time_s, ramp_time_s=ramp_time_s)
+    return stage_gate * time_gate * torch.mean(torch.square(actions[:, [1, 4]] - previous[:, [1, 4]]), dim=1)
 
 
 def recovery_stage_force_action_symmetry_l2(
