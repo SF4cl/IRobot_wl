@@ -45,7 +45,7 @@ class WLVMCVanillaFlatEnvCfg(WLVMCVanillaRoughEnvCfg):
         self.rewards.ang_vel_xy_l2.weight = -0.05
         self.rewards.flat_orientation_l2.weight = -10.0
 
-        self.rewards.base_height_l2.weight = 3.0
+        self.rewards.base_height_l2.weight = 1.2
         self.rewards.base_height_l2.func = mdp.recovery_low_to_command_base_height_exp
         self.rewards.base_height_l2.params = {
             "command_name": "base_velocity",
@@ -181,7 +181,12 @@ class WLVMCVanillaFlatEnvCfg(WLVMCVanillaRoughEnvCfg):
             "max_reward": 0.06,
             "max_penalty": 0.01,
         }
-        self.rewards.self_right_upright_success.weight = 2.0
+        self.rewards.self_right_projected_gravity_z_progress.weight = 45.0
+        self.rewards.self_right_projected_gravity_z_progress.params = {
+            "max_reward": 0.08,
+            "max_penalty": 0.02,
+        }
+        self.rewards.self_right_upright_success.weight = 8.0
         self.rewards.self_right_upright_success.params = {
             "threshold": -0.75,
         }
@@ -369,7 +374,7 @@ class WLVMCVanillaFlatEnvCfg(WLVMCVanillaRoughEnvCfg):
 
         self.curriculum.recovery_stages = CurrTerm(
             func=mdp.recovery_staged_curriculum,
-            params={"stage_steps": (1000, 2500, 4500, 6500)},
+            params={"stage_steps": (2500, 5000, 8000, 11000)},
         )
 
         # Keep locomotion commands tiny until the recovery curriculum reaches run stage.
@@ -408,7 +413,16 @@ class WLVMCVanillaFlatEnvCfg(WLVMCVanillaRoughEnvCfg):
             },
             "joint_position_range": (-0.9, 0.9),
             "joint_velocity_range": (-0.8, 0.8),
+            "stage0_joint_position_range": (-0.25, 0.25),
+            "stage1_joint_position_range": (-0.45, 0.45),
+            "stage2_joint_position_range": (-0.7, 0.7),
+            "stage0_joint_velocity_range": (-0.2, 0.2),
+            "stage1_joint_velocity_range": (-0.35, 0.35),
+            "stage2_joint_velocity_range": (-0.55, 0.55),
             "fallen_probability": 1.0,
+            "stage0_fallen_probability": 0.75,
+            "stage1_fallen_probability": 0.9,
+            "stage2_fallen_probability": 1.0,
             "ground_height_offset": 0.14,
             "allow_random_orientation": True,
             "body_half_extents": (0.24, 0.17, 0.10),

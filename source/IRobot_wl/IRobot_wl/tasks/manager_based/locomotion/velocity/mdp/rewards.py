@@ -1685,6 +1685,29 @@ def self_right_tilt_progress(
     return torch.clamp(progress, min=-max_penalty, max=max_reward)
 
 
+def self_right_projected_gravity_z_progress(
+    env: ManagerBasedRLEnv,
+    max_reward: float = 0.08,
+    max_penalty: float = 0.02,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Reward step-to-step movement of projected gravity z toward upright."""
+    asset: RigidObject = env.scene[asset_cfg.name]
+    projected_gravity_z = asset.data.projected_gravity_b[:, 2]
+
+    prev_name = "_self_right_prev_projected_gravity_z"
+    prev_projected_gravity_z = getattr(env, prev_name, None)
+    if prev_projected_gravity_z is None or prev_projected_gravity_z.shape != projected_gravity_z.shape:
+        prev_projected_gravity_z = projected_gravity_z.detach().clone()
+
+    progress = prev_projected_gravity_z - projected_gravity_z
+    if hasattr(env, "episode_length_buf"):
+        progress = torch.where(env.episode_length_buf <= 1, torch.zeros_like(progress), progress)
+
+    setattr(env, prev_name, projected_gravity_z.detach().clone())
+    return torch.clamp(progress, min=-max_penalty, max=max_reward)
+
+
 def self_right_upright_success(
     env: ManagerBasedRLEnv,
     threshold: float = -0.85,

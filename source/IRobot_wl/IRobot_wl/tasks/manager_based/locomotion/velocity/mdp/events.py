@@ -279,7 +279,16 @@ def reset_root_state_fallen(
     velocity_range: dict[str, tuple[float, float]] | None = None,
     joint_position_range: tuple[float, float] = (-0.5, 0.5),
     joint_velocity_range: tuple[float, float] = (-1.0, 1.0),
+    stage0_joint_position_range: tuple[float, float] | None = None,
+    stage1_joint_position_range: tuple[float, float] | None = None,
+    stage2_joint_position_range: tuple[float, float] | None = None,
+    stage0_joint_velocity_range: tuple[float, float] | None = None,
+    stage1_joint_velocity_range: tuple[float, float] | None = None,
+    stage2_joint_velocity_range: tuple[float, float] | None = None,
     fallen_probability: float = 1.0,
+    stage0_fallen_probability: float | None = None,
+    stage1_fallen_probability: float | None = None,
+    stage2_fallen_probability: float | None = None,
     ground_height_offset: float = 0.05,
     allow_random_orientation: bool = True,
     simple_fall_type: str | None = None,
@@ -311,7 +320,10 @@ def reset_root_state_fallen(
         velocity_range: Ranges for root velocity randomization. If None, uses defaults.
         joint_position_range: (min, max) range for random joint positions [rad].
         joint_velocity_range: (min, max) range for random joint velocities [rad/s].
+        stageN_joint_position_range: Optional easier joint range in recovery stage N.
+        stageN_joint_velocity_range: Optional easier joint-velocity range in recovery stage N.
         fallen_probability: Probability that a given env gets a fallen pose (vs normal).
+        stageN_fallen_probability: Optional stage-specific fallen probability.
         ground_height_offset: Extra height offset above ground for the base [m].
         body_half_extents: Approximate base-body half extents used to keep random orientations above ground.
         spawn_height_margin: Extra clearance above the oriented body support radius.
@@ -356,6 +368,19 @@ def reset_root_state_fallen(
     device = asset.device
     root_states = asset.data.default_root_state[env_ids].clone()
     recovery_stage = int(getattr(env, "_recovery_curriculum_stage", 0)) if use_recovery_curriculum else 3
+    if use_recovery_curriculum:
+        if recovery_stage <= 0:
+            joint_position_range = stage0_joint_position_range or joint_position_range
+            joint_velocity_range = stage0_joint_velocity_range or joint_velocity_range
+            fallen_probability = stage0_fallen_probability if stage0_fallen_probability is not None else fallen_probability
+        elif recovery_stage == 1:
+            joint_position_range = stage1_joint_position_range or joint_position_range
+            joint_velocity_range = stage1_joint_velocity_range or joint_velocity_range
+            fallen_probability = stage1_fallen_probability if stage1_fallen_probability is not None else fallen_probability
+        elif recovery_stage == 2:
+            joint_position_range = stage2_joint_position_range or joint_position_range
+            joint_velocity_range = stage2_joint_velocity_range or joint_velocity_range
+            fallen_probability = stage2_fallen_probability if stage2_fallen_probability is not None else fallen_probability
 
     # --- Determine which envs get fallen vs normal ---
     is_fallen = torch.rand(num_envs, device=device) < fallen_probability

@@ -666,6 +666,10 @@ class RewardsCfg:
     self_right_orientation_l2 = RewTerm(func=mdp.self_right_orientation_l2, weight=0.0)
     recovery_upright_progress = RewTerm(func=mdp.recovery_upright_progress, weight=0.0)
     self_right_tilt_progress = RewTerm(func=mdp.self_right_tilt_progress, weight=0.0)
+    self_right_projected_gravity_z_progress = RewTerm(
+        func=mdp.self_right_projected_gravity_z_progress,
+        weight=0.0,
+    )
     self_right_upright_success = RewTerm(func=mdp.self_right_upright_success, weight=0.0)
     recovery_stage_gate = RewTerm(func=mdp.recovery_curriculum_gate, weight=0.0)
     recovery_stand_min_leg_length = RewTerm(
