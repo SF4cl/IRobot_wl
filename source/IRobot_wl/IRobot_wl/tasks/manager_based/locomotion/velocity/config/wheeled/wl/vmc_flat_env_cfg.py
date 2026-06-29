@@ -224,6 +224,12 @@ class WLVMCVanillaFlatEnvCfg(WLVMCVanillaRoughEnvCfg):
             "stage": 3,
             "asset_cfg": SceneEntityCfg("robot", joint_names=self.wheel_joint_names),
         }
+        self.rewards.recovery_stage_wheel_action.weight = -0.35
+        self.rewards.recovery_stage_wheel_action.params = {
+            "action_name": "vmc",
+            "min_stage": 0,
+            "max_stage": 3,
+        }
         self.rewards.recovery_stage_wheel_vel.weight = -0.0008
         self.rewards.recovery_stage_wheel_vel.params = {
             "min_stage": 4,
@@ -363,7 +369,7 @@ class WLVMCVanillaFlatEnvCfg(WLVMCVanillaRoughEnvCfg):
 
         self.curriculum.recovery_stages = CurrTerm(
             func=mdp.recovery_staged_curriculum,
-            params={"stage_steps": (300, 900, 1500, 2100)},
+            params={"stage_steps": (1000, 2500, 4500, 6500)},
         )
 
         # Keep locomotion commands tiny until the recovery curriculum reaches run stage.

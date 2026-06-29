@@ -710,6 +710,11 @@ class RewardsCfg:
         weight=0.0,
         params={"asset_cfg": SceneEntityCfg("robot", joint_names="")},
     )
+    recovery_stage_wheel_action = RewTerm(
+        func=mdp.recovery_stage_wheel_action_l2,
+        weight=0.0,
+        params={"action_name": "vmc"},
+    )
     recovery_stage_base_lin_vel_z = RewTerm(
         func=mdp.recovery_stage_base_lin_vel_z_l2,
         weight=0.0,

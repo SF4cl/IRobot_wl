@@ -196,6 +196,12 @@ class ContinuousHeightVelocityCommand(mdp.UniformVelocityCommand):
         self.base_height_command_b[env_ids] = torch.empty(count, device=self.device).uniform_(
             *getattr(self.cfg, "base_height_range", (0.19, 0.28))
         )
+        if int(getattr(self._env, "_recovery_curriculum_stage", 4)) < 4:
+            self.vel_command_b[env_ids, :] = 0.0
+            if hasattr(self, "is_standing_env"):
+                self.is_standing_env[env_ids] = True
+            if hasattr(self, "is_heading_env"):
+                self.is_heading_env[env_ids] = False
 
 
 @configclass

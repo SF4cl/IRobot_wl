@@ -2743,6 +2743,19 @@ def recovery_stage_zero_cmd_wheel_action_l2(
     return gate * torch.mean(torch.square(actions[:, [2, 5]]), dim=1)
 
 
+def recovery_stage_wheel_action_l2(
+    env: ManagerBasedRLEnv,
+    action_name: str = "vmc",
+    min_stage: int = 0,
+    max_stage: int | None = 3,
+) -> torch.Tensor:
+    """Penalize wheel action outputs during recovery stages where wheel torque is gated off."""
+    action_term = env.action_manager.get_term(action_name)
+    actions = getattr(action_term, "processed_actions", action_term.raw_actions)
+    stage_gate = recovery_curriculum_gate(env, min_stage=min_stage, max_stage=max_stage)
+    return stage_gate * torch.mean(torch.square(actions[:, [2, 5]]), dim=1)
+
+
 def recovery_wheel_assist(
     env: ManagerBasedRLEnv,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
