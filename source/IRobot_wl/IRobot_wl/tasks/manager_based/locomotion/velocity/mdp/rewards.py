@@ -2552,6 +2552,71 @@ def recovery_stage_leg_length_vel_l2(
     return stage_gate * time_gate * torch.mean(torch.square(state["L0_dot"]), dim=1)
 
 
+def recovery_stage_leg_length_upper_l2(
+    env: ManagerBasedRLEnv,
+    max_length: float = 0.235,
+    min_stage: int = 4,
+    max_stage: int | None = None,
+    start_time_s: float = 0.5,
+    ramp_time_s: float = 1.0,
+    leg_joint_names: list[str] | None = None,
+    wheel_joint_names: list[str] | None = None,
+    l1: float = 0.21665632675675972,
+    l2: float = 0.2540023491164531,
+    offset: float = -0.007712217793726145,
+    theta1_offset: float = 0.14299916248023697,
+    theta2_offset: float = 2.406020345452543,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Penalize over-extending virtual leg length during locomotion."""
+    if leg_joint_names is None or wheel_joint_names is None:
+        return torch.zeros(env.num_envs, device=env.device)
+
+    from IRobot_wl.tasks.manager_based.locomotion.velocity.mdp.vmc import compute_vmc_state
+
+    asset: Articulation = env.scene[asset_cfg.name]
+    leg_joint_indices = asset.find_joints(leg_joint_names, preserve_order=True)[0]
+    wheel_joint_indices = asset.find_joints(wheel_joint_names, preserve_order=True)[0]
+    state = compute_vmc_state(
+        asset.data.joint_pos,
+        asset.data.joint_vel,
+        leg_joint_indices,
+        wheel_joint_indices,
+        l1,
+        l2,
+        offset,
+        theta1_offset,
+        theta2_offset,
+        env.step_dt,
+    )
+    stage_gate = recovery_curriculum_gate(env, min_stage=min_stage, max_stage=max_stage)
+    time_gate = _recovery_stand_time_gate(env, start_time_s=start_time_s, ramp_time_s=ramp_time_s)
+    over_length = torch.clamp(state["L0"] - max_length, min=0.0)
+    return stage_gate * time_gate * torch.mean(torch.square(over_length), dim=1)
+
+
+def recovery_stage_wheel_load_deficit_l2(
+    env: ManagerBasedRLEnv,
+    min_total_force_n: float = 25.0,
+    min_each_force_n: float = 8.0,
+    min_stage: int = 4,
+    max_stage: int | None = None,
+    start_time_s: float = 0.5,
+    ramp_time_s: float = 1.0,
+    sensor_cfg: SceneEntityCfg = SceneEntityCfg("contact_forces"),
+) -> torch.Tensor:
+    """Penalize losing wheel-ground support in the run stage."""
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    net_contact_forces = contact_sensor.data.net_forces_w_history
+    wheel_force_z = torch.max(torch.abs(net_contact_forces[:, :, sensor_cfg.body_ids, 2]), dim=1)[0]
+    total_force = torch.sum(wheel_force_z, dim=1)
+    total_deficit = torch.clamp((min_total_force_n - total_force) / max(min_total_force_n, 1.0e-6), min=0.0)
+    each_deficit = torch.clamp((min_each_force_n - wheel_force_z) / max(min_each_force_n, 1.0e-6), min=0.0)
+    stage_gate = recovery_curriculum_gate(env, min_stage=min_stage, max_stage=max_stage)
+    time_gate = _recovery_stand_time_gate(env, start_time_s=start_time_s, ramp_time_s=ramp_time_s)
+    return stage_gate * time_gate * (torch.square(total_deficit) + 0.5 * torch.mean(torch.square(each_deficit), dim=1))
+
+
 def recovery_stage_command_base_height_under_l2(
     env: ManagerBasedRLEnv,
     command_name: str,

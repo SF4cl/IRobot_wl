@@ -245,13 +245,13 @@ class WLVMCVanillaFlatEnvCfg(WLVMCVanillaRoughEnvCfg):
             "min_stage": 4,
             "asset_cfg": SceneEntityCfg("robot", joint_names=self.wheel_joint_names),
         }
-        self.rewards.recovery_stage_base_lin_vel_z.weight = -8.0
+        self.rewards.recovery_stage_base_lin_vel_z.weight = -24.0
         self.rewards.recovery_stage_base_lin_vel_z.params = {
             "min_stage": 4,
             "start_time_s": 0.5,
             "ramp_time_s": 1.0,
         }
-        self.rewards.recovery_stage_leg_length_vel.weight = -0.25
+        self.rewards.recovery_stage_leg_length_vel.weight = -1.0
         self.rewards.recovery_stage_leg_length_vel.params = {
             "min_stage": 4,
             "start_time_s": 0.5,
@@ -263,6 +263,29 @@ class WLVMCVanillaFlatEnvCfg(WLVMCVanillaRoughEnvCfg):
             "offset": self.vmc_actions.offset,
             "theta1_offset": self.vmc_actions.theta1_offset,
             "theta2_offset": self.vmc_actions.theta2_offset,
+        }
+        self.rewards.recovery_stage_leg_length_upper.weight = -900.0
+        self.rewards.recovery_stage_leg_length_upper.params = {
+            "max_length": 0.235,
+            "min_stage": 4,
+            "start_time_s": 0.5,
+            "ramp_time_s": 1.0,
+            "leg_joint_names": self.leg_joint_names,
+            "wheel_joint_names": self.wheel_joint_names,
+            "l1": self.vmc_actions.l1,
+            "l2": self.vmc_actions.l2,
+            "offset": self.vmc_actions.offset,
+            "theta1_offset": self.vmc_actions.theta1_offset,
+            "theta2_offset": self.vmc_actions.theta2_offset,
+        }
+        self.rewards.recovery_stage_wheel_load_deficit.weight = -3.0
+        self.rewards.recovery_stage_wheel_load_deficit.params = {
+            "min_total_force_n": 25.0,
+            "min_each_force_n": 8.0,
+            "min_stage": 4,
+            "start_time_s": 0.5,
+            "ramp_time_s": 1.0,
+            "sensor_cfg": SceneEntityCfg("contact_forces", body_names=[self.foot_link_name]),
         }
         self.rewards.recovery_stage_command_base_height_under.weight = -1200.0
         self.rewards.recovery_stage_command_base_height_under.params = {
@@ -289,7 +312,7 @@ class WLVMCVanillaFlatEnvCfg(WLVMCVanillaRoughEnvCfg):
             "start_time_s": 0.5,
             "ramp_time_s": 1.0,
         }
-        self.rewards.recovery_stage_force_action_rate.weight = -0.08
+        self.rewards.recovery_stage_force_action_rate.weight = -0.24
         self.rewards.recovery_stage_force_action_rate.params = {
             "action_name": "vmc",
             "min_stage": 4,
@@ -380,8 +403,8 @@ class WLVMCVanillaFlatEnvCfg(WLVMCVanillaRoughEnvCfg):
         # Keep locomotion commands tiny until the recovery curriculum reaches run stage.
         self.curriculum.command_levels_lin_vel.params["range_multiplier"] = (0.0, 1.0)
         self.curriculum.command_levels_lin_vel.params["threshold"] = 0.42
-        self.curriculum.command_levels_lin_vel.params["step_size"] = 0.1
-        self.curriculum.command_levels_lin_vel.params["update_interval_s"] = 100.0
+        self.curriculum.command_levels_lin_vel.params["step_size"] = 0.05
+        self.curriculum.command_levels_lin_vel.params["update_interval_s"] = 150.0
         self.curriculum.command_levels_ang_vel = None
         self.curriculum.command_levels_base_height = CurrTerm(
             func=mdp.command_levels_base_height,

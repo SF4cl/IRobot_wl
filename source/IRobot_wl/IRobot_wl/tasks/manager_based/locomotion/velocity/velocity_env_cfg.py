@@ -728,6 +728,16 @@ class RewardsCfg:
         weight=0.0,
         params={"leg_joint_names": None, "wheel_joint_names": None},
     )
+    recovery_stage_leg_length_upper = RewTerm(
+        func=mdp.recovery_stage_leg_length_upper_l2,
+        weight=0.0,
+        params={"leg_joint_names": None, "wheel_joint_names": None},
+    )
+    recovery_stage_wheel_load_deficit = RewTerm(
+        func=mdp.recovery_stage_wheel_load_deficit_l2,
+        weight=0.0,
+        params={"sensor_cfg": SceneEntityCfg("contact_forces")},
+    )
     recovery_stage_command_base_height_under = RewTerm(
         func=mdp.recovery_stage_command_base_height_under_l2,
         weight=0.0,
