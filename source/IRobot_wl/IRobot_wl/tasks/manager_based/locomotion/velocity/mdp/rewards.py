@@ -1875,6 +1875,25 @@ def _recovery_stand_time_gate(
     return torch.clamp((elapsed_time - start_time_s) / ramp_time_s, min=0.0, max=1.0)
 
 
+def _recovery_time_window_gate(
+    env: ManagerBasedRLEnv,
+    start_time_s: float = 0.0,
+    end_time_s: float | None = None,
+    ramp_time_s: float = 0.2,
+) -> torch.Tensor:
+    """Smooth gate for early landing/stabilization windows."""
+    start_gate = _recovery_stand_time_gate(env, start_time_s=start_time_s, ramp_time_s=ramp_time_s)
+    if end_time_s is None:
+        return start_gate
+
+    elapsed_time = env.episode_length_buf.to(dtype=torch.float32) * env.step_dt
+    if ramp_time_s <= 0.0:
+        end_gate = (elapsed_time <= end_time_s).float()
+    else:
+        end_gate = torch.clamp((end_time_s - elapsed_time) / ramp_time_s, min=0.0, max=1.0)
+    return start_gate * end_gate
+
+
 def _recovery_stand_leg_state(
     env: ManagerBasedRLEnv,
     leg_joint_names: list[str] | None,
@@ -2511,6 +2530,22 @@ def recovery_stage_base_lin_vel_z_l2(
     return stage_gate * time_gate * torch.square(asset.data.root_lin_vel_b[:, 2])
 
 
+def recovery_stage_landing_base_lin_vel_z_l2(
+    env: ManagerBasedRLEnv,
+    min_stage: int = 4,
+    max_stage: int | None = None,
+    start_time_s: float = 0.0,
+    end_time_s: float = 3.0,
+    ramp_time_s: float = 0.25,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Penalize vertical body velocity during the early landing window."""
+    asset: Articulation = env.scene[asset_cfg.name]
+    stage_gate = recovery_curriculum_gate(env, min_stage=min_stage, max_stage=max_stage)
+    time_gate = _recovery_time_window_gate(env, start_time_s=start_time_s, end_time_s=end_time_s, ramp_time_s=ramp_time_s)
+    return stage_gate * time_gate * torch.square(asset.data.root_lin_vel_b[:, 2])
+
+
 def recovery_stage_leg_length_vel_l2(
     env: ManagerBasedRLEnv,
     min_stage: int = 4,
@@ -2549,6 +2584,48 @@ def recovery_stage_leg_length_vel_l2(
     )
     stage_gate = recovery_curriculum_gate(env, min_stage=min_stage, max_stage=max_stage)
     time_gate = _recovery_stand_time_gate(env, start_time_s=start_time_s, ramp_time_s=ramp_time_s)
+    return stage_gate * time_gate * torch.mean(torch.square(state["L0_dot"]), dim=1)
+
+
+def recovery_stage_landing_leg_length_vel_l2(
+    env: ManagerBasedRLEnv,
+    min_stage: int = 4,
+    max_stage: int | None = None,
+    start_time_s: float = 0.0,
+    end_time_s: float = 3.0,
+    ramp_time_s: float = 0.25,
+    leg_joint_names: list[str] | None = None,
+    wheel_joint_names: list[str] | None = None,
+    l1: float = 0.21665632675675972,
+    l2: float = 0.2540023491164531,
+    offset: float = -0.007712217793726145,
+    theta1_offset: float = 0.14299916248023697,
+    theta2_offset: float = 2.406020345452543,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Penalize fast virtual-leg telescoping during early landing."""
+    if leg_joint_names is None or wheel_joint_names is None:
+        return torch.zeros(env.num_envs, device=env.device)
+
+    from IRobot_wl.tasks.manager_based.locomotion.velocity.mdp.vmc import compute_vmc_state
+
+    asset: Articulation = env.scene[asset_cfg.name]
+    leg_joint_indices = asset.find_joints(leg_joint_names, preserve_order=True)[0]
+    wheel_joint_indices = asset.find_joints(wheel_joint_names, preserve_order=True)[0]
+    state = compute_vmc_state(
+        asset.data.joint_pos,
+        asset.data.joint_vel,
+        leg_joint_indices,
+        wheel_joint_indices,
+        l1,
+        l2,
+        offset,
+        theta1_offset,
+        theta2_offset,
+        env.step_dt,
+    )
+    stage_gate = recovery_curriculum_gate(env, min_stage=min_stage, max_stage=max_stage)
+    time_gate = _recovery_time_window_gate(env, start_time_s=start_time_s, end_time_s=end_time_s, ramp_time_s=ramp_time_s)
     return stage_gate * time_gate * torch.mean(torch.square(state["L0_dot"]), dim=1)
 
 
@@ -2591,6 +2668,50 @@ def recovery_stage_leg_length_upper_l2(
     )
     stage_gate = recovery_curriculum_gate(env, min_stage=min_stage, max_stage=max_stage)
     time_gate = _recovery_stand_time_gate(env, start_time_s=start_time_s, ramp_time_s=ramp_time_s)
+    over_length = torch.clamp(state["L0"] - max_length, min=0.0)
+    return stage_gate * time_gate * torch.mean(torch.square(over_length), dim=1)
+
+
+def recovery_stage_landing_leg_length_upper_l2(
+    env: ManagerBasedRLEnv,
+    max_length: float = 0.245,
+    min_stage: int = 4,
+    max_stage: int | None = None,
+    start_time_s: float = 0.0,
+    end_time_s: float = 3.0,
+    ramp_time_s: float = 0.25,
+    leg_joint_names: list[str] | None = None,
+    wheel_joint_names: list[str] | None = None,
+    l1: float = 0.21665632675675972,
+    l2: float = 0.2540023491164531,
+    offset: float = -0.007712217793726145,
+    theta1_offset: float = 0.14299916248023697,
+    theta2_offset: float = 2.406020345452543,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Penalize early landing over-extension before it turns into a bounce."""
+    if leg_joint_names is None or wheel_joint_names is None:
+        return torch.zeros(env.num_envs, device=env.device)
+
+    from IRobot_wl.tasks.manager_based.locomotion.velocity.mdp.vmc import compute_vmc_state
+
+    asset: Articulation = env.scene[asset_cfg.name]
+    leg_joint_indices = asset.find_joints(leg_joint_names, preserve_order=True)[0]
+    wheel_joint_indices = asset.find_joints(wheel_joint_names, preserve_order=True)[0]
+    state = compute_vmc_state(
+        asset.data.joint_pos,
+        asset.data.joint_vel,
+        leg_joint_indices,
+        wheel_joint_indices,
+        l1,
+        l2,
+        offset,
+        theta1_offset,
+        theta2_offset,
+        env.step_dt,
+    )
+    stage_gate = recovery_curriculum_gate(env, min_stage=min_stage, max_stage=max_stage)
+    time_gate = _recovery_time_window_gate(env, start_time_s=start_time_s, end_time_s=end_time_s, ramp_time_s=ramp_time_s)
     over_length = torch.clamp(state["L0"] - max_length, min=0.0)
     return stage_gate * time_gate * torch.mean(torch.square(over_length), dim=1)
 
@@ -2714,6 +2835,24 @@ def recovery_stage_force_action_symmetry_l2(
     stage_gate = recovery_curriculum_gate(env, min_stage=min_stage, max_stage=max_stage)
     time_gate = _recovery_stand_time_gate(env, start_time_s=start_time_s, ramp_time_s=ramp_time_s)
     return stage_gate * time_gate * torch.square(actions[:, 1] - actions[:, 4])
+
+
+def recovery_stage_force_action_saturation_l2(
+    env: ManagerBasedRLEnv,
+    action_name: str = "vmc",
+    min_stage: int = 4,
+    max_stage: int | None = None,
+    threshold: float = 0.85,
+    start_time_s: float = 0.0,
+    ramp_time_s: float = 0.5,
+) -> torch.Tensor:
+    """Penalize leaning on nearly saturated axial-force actions in stage4."""
+    action_term = env.action_manager.get_term(action_name)
+    actions = getattr(action_term, "processed_actions", action_term.raw_actions)
+    stage_gate = recovery_curriculum_gate(env, min_stage=min_stage, max_stage=max_stage)
+    time_gate = _recovery_stand_time_gate(env, start_time_s=start_time_s, ramp_time_s=ramp_time_s)
+    excess = torch.clamp(torch.abs(actions[:, [1, 4]]) - threshold, min=0.0)
+    return stage_gate * time_gate * torch.mean(torch.square(excess), dim=1)
 
 
 def recovery_stage_zero_cmd_force_action_l2(

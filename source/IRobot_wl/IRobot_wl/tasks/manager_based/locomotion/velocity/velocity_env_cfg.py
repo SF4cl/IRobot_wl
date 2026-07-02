@@ -723,13 +723,27 @@ class RewardsCfg:
         func=mdp.recovery_stage_base_lin_vel_z_l2,
         weight=0.0,
     )
+    recovery_stage_landing_base_lin_vel_z = RewTerm(
+        func=mdp.recovery_stage_landing_base_lin_vel_z_l2,
+        weight=0.0,
+    )
     recovery_stage_leg_length_vel = RewTerm(
         func=mdp.recovery_stage_leg_length_vel_l2,
         weight=0.0,
         params={"leg_joint_names": None, "wheel_joint_names": None},
     )
+    recovery_stage_landing_leg_length_vel = RewTerm(
+        func=mdp.recovery_stage_landing_leg_length_vel_l2,
+        weight=0.0,
+        params={"leg_joint_names": None, "wheel_joint_names": None},
+    )
     recovery_stage_leg_length_upper = RewTerm(
         func=mdp.recovery_stage_leg_length_upper_l2,
+        weight=0.0,
+        params={"leg_joint_names": None, "wheel_joint_names": None},
+    )
+    recovery_stage_landing_leg_length_upper = RewTerm(
+        func=mdp.recovery_stage_landing_leg_length_upper_l2,
         weight=0.0,
         params={"leg_joint_names": None, "wheel_joint_names": None},
     )
@@ -760,6 +774,11 @@ class RewardsCfg:
     )
     recovery_stage_force_action_symmetry = RewTerm(
         func=mdp.recovery_stage_force_action_symmetry_l2,
+        weight=0.0,
+        params={"action_name": "vmc"},
+    )
+    recovery_stage_force_action_saturation = RewTerm(
+        func=mdp.recovery_stage_force_action_saturation_l2,
         weight=0.0,
         params={"action_name": "vmc"},
     )

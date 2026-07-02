@@ -289,6 +289,13 @@ def reset_root_state_fallen(
     stage0_fallen_probability: float | None = None,
     stage1_fallen_probability: float | None = None,
     stage2_fallen_probability: float | None = None,
+    stage4_upright_drop_probability: float = 0.0,
+    stage4_drop_height_range: tuple[float, float] = (0.03, 0.12),
+    stage4_drop_lin_vel_z_range: tuple[float, float] = (-0.8, -0.1),
+    stage4_drop_roll_pitch_range: tuple[float, float] = (-0.12, 0.12),
+    stage4_drop_ang_vel_range: tuple[float, float] = (-0.25, 0.25),
+    stage4_drop_joint_position_range: tuple[float, float] = (-0.35, 0.35),
+    stage4_drop_joint_velocity_range: tuple[float, float] = (-0.4, 0.4),
     ground_height_offset: float = 0.05,
     allow_random_orientation: bool = True,
     simple_fall_type: str | None = None,
@@ -324,6 +331,8 @@ def reset_root_state_fallen(
         stageN_joint_velocity_range: Optional easier joint-velocity range in recovery stage N.
         fallen_probability: Probability that a given env gets a fallen pose (vs normal).
         stageN_fallen_probability: Optional stage-specific fallen probability.
+        stage4_upright_drop_probability: In stage4, probability of replacing a fallen reset
+            with a near-upright airborne landing sample.
         ground_height_offset: Extra height offset above ground for the base [m].
         body_half_extents: Approximate base-body half extents used to keep random orientations above ground.
         spawn_height_margin: Extra clearance above the oriented body support radius.
@@ -382,8 +391,14 @@ def reset_root_state_fallen(
             joint_velocity_range = stage2_joint_velocity_range or joint_velocity_range
             fallen_probability = stage2_fallen_probability if stage2_fallen_probability is not None else fallen_probability
 
-    # --- Determine which envs get fallen vs normal ---
+    # --- Determine which envs get fallen vs normal/drop ---
     is_fallen = torch.rand(num_envs, device=device) < fallen_probability
+    is_upright_drop = torch.zeros(num_envs, dtype=torch.bool, device=device)
+    if use_recovery_curriculum and recovery_stage >= 4 and stage4_upright_drop_probability > 0.0:
+        drop_probability = max(0.0, min(float(stage4_upright_drop_probability), 1.0))
+        is_upright_drop = torch.rand(num_envs, device=device) < drop_probability
+        # Landing samples are upright-ish airborne states, not fallen body-contact starts.
+        is_fallen = is_fallen & ~is_upright_drop
 
     # --- Sample root orientations ---
     # Fallen orientations: large roll or pitch
@@ -478,6 +493,17 @@ def reset_root_state_fallen(
         pitch[normal_ids] = math_utils.sample_uniform(-0.1, 0.1, (len(normal_ids),), device=device)
         yaw[normal_ids] = math_utils.sample_uniform(-3.14, 3.14, (len(normal_ids),), device=device)
 
+    drop_ids = torch.where(is_upright_drop)[0]
+    if len(drop_ids) > 0:
+        drop_count = len(drop_ids)
+        roll[drop_ids] = math_utils.sample_uniform(
+            stage4_drop_roll_pitch_range[0], stage4_drop_roll_pitch_range[1], (drop_count,), device=device
+        )
+        pitch[drop_ids] = math_utils.sample_uniform(
+            stage4_drop_roll_pitch_range[0], stage4_drop_roll_pitch_range[1], (drop_count,), device=device
+        )
+        yaw[drop_ids] = math_utils.sample_uniform(-3.14, 3.14, (drop_count,), device=device)
+
     orientations_delta = math_utils.quat_from_euler_xyz(roll, pitch, yaw)
     orientations = math_utils.quat_mul(root_states[:, 3:7], orientations_delta)
     if reject_near_upright_fallen and is_fallen.any():
@@ -542,6 +568,12 @@ def reset_root_state_fallen(
         pos_z_fallen = torch.clamp(pos_z_fallen, max=max_fallen_spawn_height)
     pos_z_normal = root_states[:, 2]  # default height
     pos_z = torch.where(is_fallen, pos_z_fallen, pos_z_normal)
+    if is_upright_drop.any():
+        drop_height = math_utils.sample_uniform(
+            stage4_drop_height_range[0], stage4_drop_height_range[1], (num_envs,), device=device
+        )
+        pos_z_drop = root_states[:, 2] + drop_height
+        pos_z = torch.where(is_upright_drop, pos_z_drop, pos_z)
 
     positions = root_states[:, 0:3].clone()
     positions[:, 0] += pos_x
@@ -556,12 +588,37 @@ def reset_root_state_fallen(
         vel_ranges[:, 0], vel_ranges[:, 1], (num_envs, 6), device=device
     )
     velocities = root_states[:, 7:13] + vel_samples
+    if is_upright_drop.any():
+        drop_count = int(is_upright_drop.sum().item())
+        drop_ids = torch.where(is_upright_drop)[0]
+        velocities[drop_ids, 2] = math_utils.sample_uniform(
+            stage4_drop_lin_vel_z_range[0],
+            stage4_drop_lin_vel_z_range[1],
+            (drop_count,),
+            device=device,
+        )
+        velocities[drop_ids, 3:6] = math_utils.sample_uniform(
+            stage4_drop_ang_vel_range[0],
+            stage4_drop_ang_vel_range[1],
+            (drop_count, 3),
+            device=device,
+        )
 
     # --- Sample random joint positions ---
     joint_pos = asset.data.default_joint_pos[env_ids].clone()
     jp_min, jp_max = joint_position_range
     joint_noise = math_utils.sample_uniform(jp_min, jp_max, (num_envs, num_joints), device=device)
     joint_pos[:, joint_ids] += joint_noise
+    if is_upright_drop.any():
+        drop_count = int(is_upright_drop.sum().item())
+        drop_ids = torch.where(is_upright_drop)[0]
+        drop_jp_min, drop_jp_max = stage4_drop_joint_position_range
+        drop_joint_noise = math_utils.sample_uniform(
+            drop_jp_min, drop_jp_max, (drop_count, num_joints), device=device
+        )
+        drop_joint_pos = asset.data.default_joint_pos[env_ids][drop_ids].clone()
+        drop_joint_pos[:, joint_ids] += drop_joint_noise
+        joint_pos[drop_ids[:, None], joint_ids] = drop_joint_pos[:, joint_ids]
     if clamp_joint_positions and hasattr(asset.data, "soft_joint_pos_limits"):
         joint_limits = asset.data.soft_joint_pos_limits[env_ids][:, joint_ids]
         lower = joint_limits[..., 0]
@@ -574,6 +631,13 @@ def reset_root_state_fallen(
     # --- Sample random joint velocities ---
     jv_min, jv_max = joint_velocity_range
     joint_vel = math_utils.sample_uniform(jv_min, jv_max, (num_envs, num_joints), device=device)
+    if is_upright_drop.any():
+        drop_count = int(is_upright_drop.sum().item())
+        drop_ids = torch.where(is_upright_drop)[0]
+        drop_jv_min, drop_jv_max = stage4_drop_joint_velocity_range
+        joint_vel[drop_ids] = math_utils.sample_uniform(
+            drop_jv_min, drop_jv_max, (drop_count, num_joints), device=device
+        )
 
     # --- Write to simulation ---
     asset.write_root_pose_to_sim(torch.cat([positions, orientations], dim=-1), env_ids=env_ids)

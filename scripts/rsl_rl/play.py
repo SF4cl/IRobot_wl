@@ -81,6 +81,9 @@ parser.add_argument(
 )
 parser.add_argument("--real-time", action="store_true", default=False, help="Run in real-time, if possible.")
 parser.add_argument("--keyboard", action="store_true", default=False, help="Whether to use keyboard.")
+parser.add_argument("--command_vx", type=float, default=None, help="Fixed forward velocity command for play [m/s].")
+parser.add_argument("--command_yaw", type=float, default=None, help="Fixed yaw-rate command for play [rad/s].")
+parser.add_argument("--command_height", type=float, default=None, help="Fixed base-height command for play [m].")
 # append RSL-RL cli arguments
 cli_args.add_rsl_rl_args(parser)
 # append AppLauncher cli args
@@ -177,6 +180,20 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     env_cfg.events.push_robot = None
     env_cfg.curriculum.command_levels_lin_vel = None
     env_cfg.curriculum.command_levels_ang_vel = None
+    env_cfg.curriculum.recovery_stages = None
+    if hasattr(env_cfg.curriculum, "command_levels_base_height"):
+        env_cfg.curriculum.command_levels_base_height = None
+
+    if args_cli.command_vx is not None:
+        env_cfg.commands.base_velocity.ranges.lin_vel_x = (args_cli.command_vx, args_cli.command_vx)
+        if hasattr(env_cfg.commands.base_velocity, "rel_standing_envs"):
+            env_cfg.commands.base_velocity.rel_standing_envs = 0.0
+    if args_cli.command_yaw is not None:
+        env_cfg.commands.base_velocity.ranges.ang_vel_z = (args_cli.command_yaw, args_cli.command_yaw)
+        if hasattr(env_cfg.commands.base_velocity, "rel_standing_envs"):
+            env_cfg.commands.base_velocity.rel_standing_envs = 0.0
+    if args_cli.command_height is not None and hasattr(env_cfg.commands.base_velocity, "base_height_range"):
+        env_cfg.commands.base_velocity.base_height_range = (args_cli.command_height, args_cli.command_height)
 
     keyboard_controller = None
     keyboard_command_cache = {"step": None, "raw": None, "obs": None}
@@ -186,7 +203,11 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         env_cfg.commands.base_velocity.debug_vis = False
         policy_velocity_term = env_cfg.observations.policy.velocity_commands
         velocity_term_params = dict(getattr(policy_velocity_term, "params", {}) or {})
-        default_height_command = float(velocity_term_params.get("height_command", 0.25))
+        default_height_command = float(
+            args_cli.command_height if args_cli.command_height is not None else velocity_term_params.get("height_command", 0.25)
+        )
+        height_min, height_max = getattr(env_cfg.commands.base_velocity, "base_height_range", (0.19, 0.28))
+        keyboard_height_command = {"value": max(float(height_min), min(default_height_command, float(height_max)))}
         original_velocity_obs_terms = {
             "policy": (
                 env_cfg.observations.policy.velocity_commands.func,
@@ -214,7 +235,27 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         )
         keyboard_controller = Se2Keyboard(config)
         keyboard_controller.reset()
+        keyboard_controller.add_callback(
+            "I",
+            lambda: keyboard_height_command.__setitem__(
+                "value", min(float(height_max), keyboard_height_command["value"] + 0.01)
+            ),
+        )
+        keyboard_controller.add_callback(
+            "K",
+            lambda: keyboard_height_command.__setitem__(
+                "value", max(float(height_min), keyboard_height_command["value"] - 0.01)
+            ),
+        )
+        keyboard_controller.add_callback(
+            "U",
+            lambda: keyboard_height_command.__setitem__("value", max(float(height_min), min(default_height_command, float(height_max)))),
+        )
         print(keyboard_controller)
+        print(
+            "[INFO] WL keyboard height controls: I raises target height, K lowers target height, U resets height "
+            f"to {keyboard_height_command['value']:.3f} m."
+        )
         keyboard_heading_target = {"value": None}
 
         def update_keyboard_command(env):
@@ -235,7 +276,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
                 if hasattr(command_term, "heading_target"):
                     command_term.heading_target[:] = keyboard_heading_target["value"]
                 if hasattr(command_term, "base_height_command_b"):
-                    command_term.base_height_command_b[:] = default_height_command
+                    command_term.base_height_command_b[:] = keyboard_height_command["value"]
                 heading_error = math_utils.wrap_to_pi(
                     keyboard_heading_target["value"] - env.scene["robot"].data.heading_w
                 )
@@ -300,6 +341,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
 
     # create isaac environment
     env = gym.make(args_cli.task, cfg=env_cfg, render_mode="rgb_array" if args_cli.video else None)
+    env.unwrapped._recovery_curriculum_stage = 4
+    env.unwrapped._recovery_curriculum_iteration_offset = 0
 
     # convert to single-agent instance if required by the RL algorithm
     if isinstance(env.unwrapped, DirectMARLEnv):
@@ -388,6 +431,10 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         base_lin_vel = robot.data.root_lin_vel_b
         base_ang_vel = robot.data.root_ang_vel_b
         commands = env.unwrapped.command_manager.get_command("base_velocity")
+        command_term = env.unwrapped.command_manager.get_term("base_velocity")
+        base_height_cmd = getattr(command_term, "base_height_command_b", None)
+        if base_height_cmd is None:
+            base_height_cmd = torch.full((env.unwrapped.num_envs,), 0.235, device=robot.data.root_pos_w.device)
         keyboard_cmd = keyboard_command_cache["raw"] if keyboard_controller is not None else None
 
         wheel_vel = dof_vel[:, _wheel_joint_ids]
@@ -418,6 +465,7 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
         print(f" Step debug (Env0)")
         print(f"  Base lin vel [x,y,z]:      {_fmt(base_lin_vel[0])}")
         print(f"  Commands   [vx,vy,omega]:  {_fmt(commands[0])}")
+        print(f"  Base height/cmd:           {robot.data.root_pos_w[0, 2].item():.3f} / {base_height_cmd[0].item():.3f}")
         if keyboard_cmd is not None:
             print(f"  Keyboard   [vx,vy,head]:   {_fmt(keyboard_cmd[0])}")
         print(f"  --- VMC task space ---")

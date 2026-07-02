@@ -45,7 +45,7 @@ class WLVMCVanillaFlatEnvCfg(WLVMCVanillaRoughEnvCfg):
         self.rewards.ang_vel_xy_l2.weight = -0.05
         self.rewards.flat_orientation_l2.weight = -10.0
 
-        self.rewards.base_height_l2.weight = 1.2
+        self.rewards.base_height_l2.weight = 1.6
         self.rewards.base_height_l2.func = mdp.recovery_low_to_command_base_height_exp
         self.rewards.base_height_l2.params = {
             "command_name": "base_velocity",
@@ -251,7 +251,14 @@ class WLVMCVanillaFlatEnvCfg(WLVMCVanillaRoughEnvCfg):
             "start_time_s": 0.5,
             "ramp_time_s": 1.0,
         }
-        self.rewards.recovery_stage_leg_length_vel.weight = -1.0
+        self.rewards.recovery_stage_landing_base_lin_vel_z.weight = -16.0
+        self.rewards.recovery_stage_landing_base_lin_vel_z.params = {
+            "min_stage": 4,
+            "start_time_s": 0.0,
+            "end_time_s": 3.0,
+            "ramp_time_s": 0.25,
+        }
+        self.rewards.recovery_stage_leg_length_vel.weight = -0.7
         self.rewards.recovery_stage_leg_length_vel.params = {
             "min_stage": 4,
             "start_time_s": 0.5,
@@ -264,12 +271,41 @@ class WLVMCVanillaFlatEnvCfg(WLVMCVanillaRoughEnvCfg):
             "theta1_offset": self.vmc_actions.theta1_offset,
             "theta2_offset": self.vmc_actions.theta2_offset,
         }
+        self.rewards.recovery_stage_landing_leg_length_vel.weight = -1.2
+        self.rewards.recovery_stage_landing_leg_length_vel.params = {
+            "min_stage": 4,
+            "start_time_s": 0.0,
+            "end_time_s": 3.0,
+            "ramp_time_s": 0.25,
+            "leg_joint_names": self.leg_joint_names,
+            "wheel_joint_names": self.wheel_joint_names,
+            "l1": self.vmc_actions.l1,
+            "l2": self.vmc_actions.l2,
+            "offset": self.vmc_actions.offset,
+            "theta1_offset": self.vmc_actions.theta1_offset,
+            "theta2_offset": self.vmc_actions.theta2_offset,
+        }
         self.rewards.recovery_stage_leg_length_upper.weight = -900.0
         self.rewards.recovery_stage_leg_length_upper.params = {
-            "max_length": 0.235,
+            "max_length": 0.292,
             "min_stage": 4,
             "start_time_s": 0.5,
             "ramp_time_s": 1.0,
+            "leg_joint_names": self.leg_joint_names,
+            "wheel_joint_names": self.wheel_joint_names,
+            "l1": self.vmc_actions.l1,
+            "l2": self.vmc_actions.l2,
+            "offset": self.vmc_actions.offset,
+            "theta1_offset": self.vmc_actions.theta1_offset,
+            "theta2_offset": self.vmc_actions.theta2_offset,
+        }
+        self.rewards.recovery_stage_landing_leg_length_upper.weight = -1200.0
+        self.rewards.recovery_stage_landing_leg_length_upper.params = {
+            "max_length": 0.270,
+            "min_stage": 4,
+            "start_time_s": 0.0,
+            "end_time_s": 1.25,
+            "ramp_time_s": 0.25,
             "leg_joint_names": self.leg_joint_names,
             "wheel_joint_names": self.wheel_joint_names,
             "l1": self.vmc_actions.l1,
@@ -287,21 +323,21 @@ class WLVMCVanillaFlatEnvCfg(WLVMCVanillaRoughEnvCfg):
             "ramp_time_s": 1.0,
             "sensor_cfg": SceneEntityCfg("contact_forces", body_names=[self.foot_link_name]),
         }
-        self.rewards.recovery_stage_command_base_height_under.weight = -1200.0
+        self.rewards.recovery_stage_command_base_height_under.weight = -1800.0
         self.rewards.recovery_stage_command_base_height_under.params = {
             "command_name": "base_velocity",
             "min_stage": 4,
             "fallback_target_height": 0.235,
-            "margin": 0.005,
+            "margin": 0.003,
             "start_time_s": 0.5,
             "ramp_time_s": 1.0,
         }
-        self.rewards.recovery_stage_command_base_height.weight = -800.0
+        self.rewards.recovery_stage_command_base_height.weight = -1600.0
         self.rewards.recovery_stage_command_base_height.params = {
             "command_name": "base_velocity",
             "min_stage": 4,
             "fallback_target_height": 0.235,
-            "margin": 0.004,
+            "margin": 0.003,
             "start_time_s": 0.5,
             "ramp_time_s": 1.0,
         }
@@ -326,7 +362,15 @@ class WLVMCVanillaFlatEnvCfg(WLVMCVanillaRoughEnvCfg):
             "start_time_s": 0.5,
             "ramp_time_s": 1.0,
         }
-        self.rewards.recovery_zero_cmd_lin_vel_xy.weight = -3.0
+        self.rewards.recovery_stage_force_action_saturation.weight = -2.0
+        self.rewards.recovery_stage_force_action_saturation.params = {
+            "action_name": "vmc",
+            "min_stage": 4,
+            "threshold": 0.85,
+            "start_time_s": 0.0,
+            "ramp_time_s": 0.5,
+        }
+        self.rewards.recovery_zero_cmd_lin_vel_xy.weight = -6.0
         self.rewards.recovery_zero_cmd_lin_vel_xy.params = {
             "command_name": "base_velocity",
             "min_stage": 4,
@@ -446,6 +490,13 @@ class WLVMCVanillaFlatEnvCfg(WLVMCVanillaRoughEnvCfg):
             "stage0_fallen_probability": 0.75,
             "stage1_fallen_probability": 0.9,
             "stage2_fallen_probability": 1.0,
+            "stage4_upright_drop_probability": 0.35,
+            "stage4_drop_height_range": (0.04, 0.14),
+            "stage4_drop_lin_vel_z_range": (-0.9, -0.1),
+            "stage4_drop_roll_pitch_range": (-0.12, 0.12),
+            "stage4_drop_ang_vel_range": (-0.25, 0.25),
+            "stage4_drop_joint_position_range": (-0.35, 0.35),
+            "stage4_drop_joint_velocity_range": (-0.4, 0.4),
             "ground_height_offset": 0.14,
             "allow_random_orientation": True,
             "body_half_extents": (0.24, 0.17, 0.10),
