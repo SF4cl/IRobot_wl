@@ -183,6 +183,8 @@ def main(env_cfg: ManagerBasedRLEnvCfg | DirectRLEnvCfg | DirectMARLEnvCfg, agen
     env_cfg.curriculum.recovery_stages = None
     if hasattr(env_cfg.curriculum, "command_levels_base_height"):
         env_cfg.curriculum.command_levels_base_height = None
+    if hasattr(env_cfg.curriculum, "recovery_locomotion_commands"):
+        env_cfg.curriculum.recovery_locomotion_commands = None
 
     if args_cli.command_vx is not None:
         env_cfg.commands.base_velocity.ranges.lin_vel_x = (args_cli.command_vx, args_cli.command_vx)

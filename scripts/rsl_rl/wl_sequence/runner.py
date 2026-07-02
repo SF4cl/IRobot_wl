@@ -427,6 +427,7 @@ class WlSequenceRunner:
             "mean_reward": statistics.mean(rewbuffer) if len(rewbuffer) > 0 else None,
             "mean_episode_length": statistics.mean(lenbuffer) if len(lenbuffer) > 0 else None,
             "recovery_stage": int(getattr(self.env.unwrapped, "_recovery_curriculum_stage", 0)),
+            "recovery_locomotion_substage": int(getattr(self.env.unwrapped, "_recovery_locomotion_substage", 0)),
             "loss": {
                 "value_function": float(mean_value_loss),
                 "surrogate": float(mean_surrogate_loss),
@@ -620,6 +621,11 @@ class WlSequenceRunner:
         self.writer.add_scalar(
             "Diagnostics/recovery_stage",
             float(getattr(self.env.unwrapped, "_recovery_curriculum_stage", 0)),
+            it,
+        )
+        self.writer.add_scalar(
+            "Diagnostics/recovery_locomotion_substage",
+            float(getattr(self.env.unwrapped, "_recovery_locomotion_substage", 0)),
             it,
         )
 

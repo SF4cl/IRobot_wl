@@ -441,22 +441,39 @@ class WLVMCVanillaFlatEnvCfg(WLVMCVanillaRoughEnvCfg):
 
         self.curriculum.recovery_stages = CurrTerm(
             func=mdp.recovery_staged_curriculum,
-            params={"stage_steps": (2500, 5000, 8000, 11000)},
+            params={
+                "stage_steps": (2500, 5000, 8000, 11000),
+                "performance_gate": True,
+                "min_stage_iterations": (1200, 1800, 2200, 2200),
+                "eval_interval_iterations": 120,
+                "pass_windows": 3,
+                "min_completed_episodes": 512,
+                "upright_success_thresholds": (0.62, 0.68, 0.72, 0.78),
+                "ready_success_thresholds": (0.10, 0.24, 0.42, 0.62),
+                "still_success_thresholds": (0.0, 0.0, 0.25, 0.58),
+                "max_height_error_thresholds": (1.0, 1.0, 0.060, 0.040),
+            },
         )
 
-        # Keep locomotion commands tiny until the recovery curriculum reaches run stage.
-        self.curriculum.command_levels_lin_vel.params["range_multiplier"] = (0.0, 1.0)
-        self.curriculum.command_levels_lin_vel.params["threshold"] = 0.42
-        self.curriculum.command_levels_lin_vel.params["step_size"] = 0.05
-        self.curriculum.command_levels_lin_vel.params["update_interval_s"] = 150.0
+        # Keep locomotion commands structured until the robot has proved it can stand and track.
+        self.curriculum.command_levels_lin_vel = None
         self.curriculum.command_levels_ang_vel = None
-        self.curriculum.command_levels_base_height = CurrTerm(
-            func=mdp.command_levels_base_height,
+        self.curriculum.command_levels_base_height = None
+        self.curriculum.recovery_locomotion_commands = CurrTerm(
+            func=mdp.recovery_locomotion_command_curriculum,
             params={
-                "initial_range": (0.19, 0.22),
-                "final_range": (0.19, 0.28),
-                "step_size": 0.02,
-                "update_interval_iterations": 300,
+                "lin_vel_ranges": ((-0.45, 0.45), (-0.9, 0.9), (-1.5, 1.5), (-1.5, 1.5)),
+                "ang_vel_ranges": ((0.0, 0.0), (-0.35, 0.35), (-0.75, 0.75), (-1.0, 1.0)),
+                "height_ranges": ((0.21, 0.24), (0.20, 0.26), (0.19, 0.28), (0.19, 0.28)),
+                "min_substage_iterations": (1000, 1200, 1400),
+                "eval_interval_iterations": 120,
+                "pass_windows": 3,
+                "min_completed_episodes": 512,
+                "lin_error_thresholds": (0.18, 0.22, 0.26),
+                "ang_error_thresholds": (0.18, 0.24, 0.30),
+                "height_error_thresholds": (0.025, 0.025, 0.020),
+                "upright_success_threshold": 0.80,
+                "ready_success_threshold": 0.65,
             },
         )
 
@@ -491,6 +508,7 @@ class WLVMCVanillaFlatEnvCfg(WLVMCVanillaRoughEnvCfg):
             "stage1_fallen_probability": 0.9,
             "stage2_fallen_probability": 1.0,
             "stage4_upright_drop_probability": 0.35,
+            "stage4_drop_min_substage": 3,
             "stage4_drop_height_range": (0.04, 0.14),
             "stage4_drop_lin_vel_z_range": (-0.9, -0.1),
             "stage4_drop_roll_pitch_range": (-0.12, 0.12),

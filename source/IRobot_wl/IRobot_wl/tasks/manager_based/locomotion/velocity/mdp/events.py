@@ -290,6 +290,7 @@ def reset_root_state_fallen(
     stage1_fallen_probability: float | None = None,
     stage2_fallen_probability: float | None = None,
     stage4_upright_drop_probability: float = 0.0,
+    stage4_drop_min_substage: int = 3,
     stage4_drop_height_range: tuple[float, float] = (0.03, 0.12),
     stage4_drop_lin_vel_z_range: tuple[float, float] = (-0.8, -0.1),
     stage4_drop_roll_pitch_range: tuple[float, float] = (-0.12, 0.12),
@@ -333,6 +334,7 @@ def reset_root_state_fallen(
         stageN_fallen_probability: Optional stage-specific fallen probability.
         stage4_upright_drop_probability: In stage4, probability of replacing a fallen reset
             with a near-upright airborne landing sample.
+        stage4_drop_min_substage: Minimum locomotion substage required before upright drop samples are enabled.
         ground_height_offset: Extra height offset above ground for the base [m].
         body_half_extents: Approximate base-body half extents used to keep random orientations above ground.
         spawn_height_margin: Extra clearance above the oriented body support radius.
@@ -394,7 +396,13 @@ def reset_root_state_fallen(
     # --- Determine which envs get fallen vs normal/drop ---
     is_fallen = torch.rand(num_envs, device=device) < fallen_probability
     is_upright_drop = torch.zeros(num_envs, dtype=torch.bool, device=device)
-    if use_recovery_curriculum and recovery_stage >= 4 and stage4_upright_drop_probability > 0.0:
+    locomotion_substage = int(getattr(env, "_recovery_locomotion_substage", 0))
+    if (
+        use_recovery_curriculum
+        and recovery_stage >= 4
+        and locomotion_substage >= int(stage4_drop_min_substage)
+        and stage4_upright_drop_probability > 0.0
+    ):
         drop_probability = max(0.0, min(float(stage4_upright_drop_probability), 1.0))
         is_upright_drop = torch.rand(num_envs, device=device) < drop_probability
         # Landing samples are upright-ish airborne states, not fallen body-contact starts.
