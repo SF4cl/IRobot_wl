@@ -220,16 +220,16 @@ class WLVMCVanillaFlatEnvCfg(WLVMCVanillaRoughEnvCfg):
         self.rewards.recovery_wheel_only_contact.params["sensor_cfg"].body_names = [
             f"^(?!.*{self.foot_link_name}).*"
         ]
-        self.rewards.recovery_still_lin_vel_xy.weight = -4.0
+        self.rewards.recovery_still_lin_vel_xy.weight = -8.0
         self.rewards.recovery_still_lin_vel_xy.params = {"stage": 3}
-        self.rewards.recovery_still_ang_vel_z.weight = -2.0
+        self.rewards.recovery_still_ang_vel_z.weight = -4.0
         self.rewards.recovery_still_ang_vel_z.params = {"stage": 3}
-        self.rewards.recovery_still_wheel_vel.weight = -0.003
+        self.rewards.recovery_still_wheel_vel.weight = -0.006
         self.rewards.recovery_still_wheel_vel.params = {
             "stage": 3,
             "asset_cfg": SceneEntityCfg("robot", joint_names=self.wheel_joint_names),
         }
-        self.rewards.recovery_stage_wheel_action.weight = -0.35
+        self.rewards.recovery_stage_wheel_action.weight = -1.2
         self.rewards.recovery_stage_wheel_action.params = {
             "action_name": "vmc",
             "min_stage": 0,
@@ -370,33 +370,33 @@ class WLVMCVanillaFlatEnvCfg(WLVMCVanillaRoughEnvCfg):
             "start_time_s": 0.0,
             "ramp_time_s": 0.5,
         }
-        self.rewards.recovery_zero_cmd_lin_vel_xy.weight = -6.0
+        self.rewards.recovery_zero_cmd_lin_vel_xy.weight = -8.0
         self.rewards.recovery_zero_cmd_lin_vel_xy.params = {
             "command_name": "base_velocity",
-            "min_stage": 4,
+            "min_stage": 2,
             "lin_vel_threshold": 0.1,
             "ang_vel_threshold": 0.1,
         }
-        self.rewards.recovery_zero_cmd_ang_vel_z.weight = -1.5
+        self.rewards.recovery_zero_cmd_ang_vel_z.weight = -4.0
         self.rewards.recovery_zero_cmd_ang_vel_z.params = {
             "command_name": "base_velocity",
-            "min_stage": 4,
+            "min_stage": 2,
             "lin_vel_threshold": 0.1,
             "ang_vel_threshold": 0.1,
         }
-        self.rewards.recovery_zero_cmd_wheel_vel.weight = -0.002
+        self.rewards.recovery_zero_cmd_wheel_vel.weight = -0.006
         self.rewards.recovery_zero_cmd_wheel_vel.params = {
             "command_name": "base_velocity",
-            "min_stage": 4,
+            "min_stage": 2,
             "lin_vel_threshold": 0.1,
             "ang_vel_threshold": 0.1,
             "asset_cfg": SceneEntityCfg("robot", joint_names=self.wheel_joint_names),
         }
-        self.rewards.recovery_zero_cmd_wheel_action.weight = -0.05
+        self.rewards.recovery_zero_cmd_wheel_action.weight = -0.3
         self.rewards.recovery_zero_cmd_wheel_action.params = {
             "command_name": "base_velocity",
             "action_name": "vmc",
-            "min_stage": 4,
+            "min_stage": 2,
             "lin_vel_threshold": 0.1,
             "ang_vel_threshold": 0.1,
         }
@@ -451,7 +451,7 @@ class WLVMCVanillaFlatEnvCfg(WLVMCVanillaRoughEnvCfg):
                 "upright_success_thresholds": (0.62, 0.68, 0.72, 0.78),
                 "ready_success_thresholds": (0.10, 0.24, 0.42, 0.62),
                 "still_success_thresholds": (0.0, 0.0, 0.25, 0.58),
-                "max_height_error_thresholds": (1.0, 1.0, 0.060, 0.040),
+                "max_height_error_thresholds": (1.0, 1.0, 1.0, 0.060),
             },
         )
 

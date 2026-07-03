@@ -332,6 +332,18 @@ def recovery_staged_curriculum(
                         and metrics["still"] >= _stage_threshold(still_success_thresholds, stage, 0.0)
                         and metrics["height_error"] <= _stage_threshold(max_height_error_thresholds, stage, 0.05)
                     )
+                setattr(
+                    env,
+                    "_recovery_stage_last_metrics",
+                    {
+                        **(metrics or {}),
+                        "count": count,
+                        "stage_elapsed": float(stage_elapsed),
+                        "min_elapsed": float(min_elapsed),
+                        "passed": float(passed),
+                        "pass_windows": float(getattr(env, "_recovery_stage_perf_pass_windows", 0)),
+                    },
+                )
                 if _advance_stage_window(env, "recovery_stage_perf", passed, pass_windows):
                     stage += 1
                     setattr(env, "_recovery_curriculum_stage", stage)
@@ -470,6 +482,18 @@ def recovery_locomotion_command_curriculum(
                         and metrics["ang_error"] <= _stage_threshold(ang_error_thresholds, substage, 0.25)
                         and metrics["height_error"] <= _stage_threshold(height_error_thresholds, substage, 0.025)
                     )
+                setattr(
+                    env,
+                    "_recovery_locomotion_last_metrics",
+                    {
+                        **(metrics or {}),
+                        "count": count,
+                        "substage_elapsed": float(substage_elapsed),
+                        "min_elapsed": float(min_elapsed),
+                        "passed": float(passed),
+                        "pass_windows": float(getattr(env, "_recovery_locomotion_perf_pass_windows", 0)),
+                    },
+                )
                 if _advance_stage_window(env, "recovery_locomotion_perf", passed, pass_windows):
                     substage += 1
                     setattr(env, "_recovery_locomotion_substage", substage)

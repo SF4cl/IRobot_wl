@@ -428,6 +428,8 @@ class WlSequenceRunner:
             "mean_episode_length": statistics.mean(lenbuffer) if len(lenbuffer) > 0 else None,
             "recovery_stage": int(getattr(self.env.unwrapped, "_recovery_curriculum_stage", 0)),
             "recovery_locomotion_substage": int(getattr(self.env.unwrapped, "_recovery_locomotion_substage", 0)),
+            "recovery_stage_metrics": getattr(self.env.unwrapped, "_recovery_stage_last_metrics", {}),
+            "recovery_locomotion_metrics": getattr(self.env.unwrapped, "_recovery_locomotion_last_metrics", {}),
             "loss": {
                 "value_function": float(mean_value_loss),
                 "surrogate": float(mean_surrogate_loss),
@@ -762,6 +764,55 @@ class WlSequenceRunner:
         print(f"{'Mean action std:':>34} {self.alg.actor_critic.std.mean().item():.2f}")
         print(f"{'Time elapsed:':>34} {self.tot_time:.1f}s")
         print(f"{'ETA:':>34} {eta_seconds:.1f}s")
+        print("-" * width)
+        command_term = self.env.unwrapped.command_manager.get_term("base_velocity")
+        command_ranges = command_term.cfg.ranges
+        height_range = getattr(command_term.cfg, "base_height_range", None)
+        height_range_text = "n/a" if height_range is None else f"[{height_range[0]:.3f}, {height_range[1]:.3f}]"
+        stage_metrics = getattr(self.env.unwrapped, "_recovery_stage_last_metrics", {}) or {}
+        locomotion_metrics = getattr(self.env.unwrapped, "_recovery_locomotion_last_metrics", {}) or {}
+        stage_metric_text = (
+            "n/a"
+            if not stage_metrics
+            else (
+                f"upr={stage_metrics.get('upright', 0.0):.2f}, ready={stage_metrics.get('ready', 0.0):.2f}, "
+                f"still={stage_metrics.get('still', 0.0):.2f}, hErr={stage_metrics.get('height_error', 0.0):.3f}, "
+                f"pass={stage_metrics.get('pass_windows', 0.0):.0f}"
+            )
+        )
+        locomotion_metric_text = (
+            "n/a"
+            if not locomotion_metrics
+            else (
+                f"linErr={locomotion_metrics.get('lin_error', 0.0):.3f}, "
+                f"yawErr={locomotion_metrics.get('ang_error', 0.0):.3f}, "
+                f"hErr={locomotion_metrics.get('height_error', 0.0):.3f}, "
+                f"pass={locomotion_metrics.get('pass_windows', 0.0):.0f}"
+            )
+        )
+        print(
+            f"{'Recovery stage/substage:':>34} "
+            f"{int(getattr(self.env.unwrapped, '_recovery_curriculum_stage', 0))}/"
+            f"{int(getattr(self.env.unwrapped, '_recovery_locomotion_substage', 0))}"
+        )
+        print(
+            f"{'Command ranges [vx,yaw,h]:':>34} "
+            f"[{command_ranges.lin_vel_x[0]:.2f}, {command_ranges.lin_vel_x[1]:.2f}], "
+            f"[{command_ranges.ang_vel_z[0]:.2f}, {command_ranges.ang_vel_z[1]:.2f}], "
+            f"{height_range_text}"
+        )
+        print(
+            f"{'Recovery gate window:':>34} {stage_metric_text}"
+        )
+        print(
+            f"{'Locomotion gate window:':>34} {locomotion_metric_text}"
+        )
+        print(
+            f"{'Actual |vx|/|yaw|/hErr:':>34} "
+            f"{self._as_float(leg_stats['base_lin_x_abs_mean']):.3f}, "
+            f"{self._as_float(leg_stats['base_ang_z_abs_mean']):.3f}, "
+            f"{self._as_float(leg_stats['base_height_error_abs_mean']):.3f}"
+        )
         print("-" * width)
         print(f"{'Left action |mean abs| [Tp, dF, wheel]:':>34} {self._format_tensor(leg_stats['left_action_mean_abs'])}")
         print(f"{'Right action |mean abs| [Tp, dF, wheel]:':>34} {self._format_tensor(leg_stats['right_action_mean_abs'])}")
