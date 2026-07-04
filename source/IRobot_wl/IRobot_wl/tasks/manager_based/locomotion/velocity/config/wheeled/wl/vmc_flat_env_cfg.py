@@ -376,6 +376,7 @@ class WLVMCVanillaFlatEnvCfg(WLVMCVanillaRoughEnvCfg):
             "min_stage": 2,
             "lin_vel_threshold": 0.1,
             "ang_vel_threshold": 0.1,
+            "min_upright_factor": 0.35,
         }
         self.rewards.recovery_zero_cmd_ang_vel_z.weight = -4.0
         self.rewards.recovery_zero_cmd_ang_vel_z.params = {
@@ -383,6 +384,7 @@ class WLVMCVanillaFlatEnvCfg(WLVMCVanillaRoughEnvCfg):
             "min_stage": 2,
             "lin_vel_threshold": 0.1,
             "ang_vel_threshold": 0.1,
+            "min_upright_factor": 0.35,
         }
         self.rewards.recovery_zero_cmd_wheel_vel.weight = -0.006
         self.rewards.recovery_zero_cmd_wheel_vel.params = {
@@ -390,6 +392,7 @@ class WLVMCVanillaFlatEnvCfg(WLVMCVanillaRoughEnvCfg):
             "min_stage": 2,
             "lin_vel_threshold": 0.1,
             "ang_vel_threshold": 0.1,
+            "min_upright_factor": 0.35,
             "asset_cfg": SceneEntityCfg("robot", joint_names=self.wheel_joint_names),
         }
         self.rewards.recovery_zero_cmd_wheel_action.weight = -0.3
@@ -399,6 +402,7 @@ class WLVMCVanillaFlatEnvCfg(WLVMCVanillaRoughEnvCfg):
             "min_stage": 2,
             "lin_vel_threshold": 0.1,
             "ang_vel_threshold": 0.1,
+            "min_upright_factor": 0.35,
         }
         self.rewards.recovery_zero_cmd_force_action.weight = -0.05
         self.rewards.recovery_zero_cmd_force_action.params = {

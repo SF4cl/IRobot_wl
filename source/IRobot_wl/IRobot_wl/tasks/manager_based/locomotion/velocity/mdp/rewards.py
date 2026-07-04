@@ -1863,6 +1863,20 @@ def recovery_stand_upright_factor(
     return torch.clamp((fallen_threshold - proj_z) / (fallen_threshold - upright_threshold), min=0.0, max=1.0)
 
 
+def recovery_stand_upright_gate(
+    env: ManagerBasedRLEnv,
+    min_upright_factor: float | None = None,
+    upright_threshold: float = -0.85,
+    fallen_threshold: float = -0.35,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+) -> torch.Tensor:
+    """Return a smooth gate that opens only after the body is mostly upright."""
+    if min_upright_factor is None:
+        return torch.ones(env.num_envs, device=env.device)
+    phase = recovery_stand_upright_factor(env, upright_threshold, fallen_threshold, asset_cfg)
+    return torch.clamp((phase - min_upright_factor) / max(1.0 - min_upright_factor, 1.0e-6), min=0.0, max=1.0)
+
+
 def _recovery_stand_time_gate(
     env: ManagerBasedRLEnv,
     start_time_s: float,
@@ -2863,6 +2877,10 @@ def recovery_stage_zero_cmd_force_action_l2(
     max_stage: int | None = None,
     lin_vel_threshold: float = 0.1,
     ang_vel_threshold: float = 0.1,
+    min_upright_factor: float | None = None,
+    upright_threshold: float = -0.85,
+    fallen_threshold: float = -0.35,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
     start_time_s: float = 0.5,
     ramp_time_s: float = 1.0,
 ) -> torch.Tensor:
@@ -2877,8 +2895,9 @@ def recovery_stage_zero_cmd_force_action_l2(
         lin_vel_threshold=lin_vel_threshold,
         ang_vel_threshold=ang_vel_threshold,
     )
+    upright_gate = recovery_stand_upright_gate(env, min_upright_factor, upright_threshold, fallen_threshold, asset_cfg)
     time_gate = _recovery_stand_time_gate(env, start_time_s=start_time_s, ramp_time_s=ramp_time_s)
-    return gate * time_gate * torch.mean(torch.square(actions[:, [1, 4]]), dim=1)
+    return gate * upright_gate * time_gate * torch.mean(torch.square(actions[:, [1, 4]]), dim=1)
 
 
 def recovery_stage_zero_cmd_lin_vel_xy_l2(
@@ -2888,6 +2907,9 @@ def recovery_stage_zero_cmd_lin_vel_xy_l2(
     max_stage: int | None = None,
     lin_vel_threshold: float = 0.1,
     ang_vel_threshold: float = 0.1,
+    min_upright_factor: float | None = None,
+    upright_threshold: float = -0.85,
+    fallen_threshold: float = -0.35,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
 ) -> torch.Tensor:
     """Penalize horizontal drift when the locomotion command is effectively zero."""
@@ -2900,7 +2922,8 @@ def recovery_stage_zero_cmd_lin_vel_xy_l2(
         lin_vel_threshold=lin_vel_threshold,
         ang_vel_threshold=ang_vel_threshold,
     )
-    return gate * torch.sum(torch.square(asset.data.root_lin_vel_b[:, :2]), dim=1)
+    upright_gate = recovery_stand_upright_gate(env, min_upright_factor, upright_threshold, fallen_threshold, asset_cfg)
+    return gate * upright_gate * torch.sum(torch.square(asset.data.root_lin_vel_b[:, :2]), dim=1)
 
 
 def recovery_stage_zero_cmd_ang_vel_z_l2(
@@ -2910,6 +2933,9 @@ def recovery_stage_zero_cmd_ang_vel_z_l2(
     max_stage: int | None = None,
     lin_vel_threshold: float = 0.1,
     ang_vel_threshold: float = 0.1,
+    min_upright_factor: float | None = None,
+    upright_threshold: float = -0.85,
+    fallen_threshold: float = -0.35,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
 ) -> torch.Tensor:
     """Penalize yaw drift when the locomotion command is effectively zero."""
@@ -2922,7 +2948,8 @@ def recovery_stage_zero_cmd_ang_vel_z_l2(
         lin_vel_threshold=lin_vel_threshold,
         ang_vel_threshold=ang_vel_threshold,
     )
-    return gate * torch.square(asset.data.root_ang_vel_b[:, 2])
+    upright_gate = recovery_stand_upright_gate(env, min_upright_factor, upright_threshold, fallen_threshold, asset_cfg)
+    return gate * upright_gate * torch.square(asset.data.root_ang_vel_b[:, 2])
 
 
 def recovery_stage_zero_cmd_wheel_vel_l2(
@@ -2932,6 +2959,9 @@ def recovery_stage_zero_cmd_wheel_vel_l2(
     max_stage: int | None = None,
     lin_vel_threshold: float = 0.1,
     ang_vel_threshold: float = 0.1,
+    min_upright_factor: float | None = None,
+    upright_threshold: float = -0.85,
+    fallen_threshold: float = -0.35,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
 ) -> torch.Tensor:
     """Penalize wheel spin when the locomotion command is effectively zero."""
@@ -2944,7 +2974,8 @@ def recovery_stage_zero_cmd_wheel_vel_l2(
         lin_vel_threshold=lin_vel_threshold,
         ang_vel_threshold=ang_vel_threshold,
     )
-    return gate * torch.mean(torch.square(asset.data.joint_vel[:, asset_cfg.joint_ids]), dim=1)
+    upright_gate = recovery_stand_upright_gate(env, min_upright_factor, upright_threshold, fallen_threshold, asset_cfg)
+    return gate * upright_gate * torch.mean(torch.square(asset.data.joint_vel[:, asset_cfg.joint_ids]), dim=1)
 
 
 def recovery_stage_zero_cmd_wheel_action_l2(
@@ -2955,6 +2986,10 @@ def recovery_stage_zero_cmd_wheel_action_l2(
     max_stage: int | None = None,
     lin_vel_threshold: float = 0.1,
     ang_vel_threshold: float = 0.1,
+    min_upright_factor: float | None = None,
+    upright_threshold: float = -0.85,
+    fallen_threshold: float = -0.35,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
 ) -> torch.Tensor:
     """Penalize wheel action effort when the locomotion command is effectively zero."""
     action_term = env.action_manager.get_term(action_name)
@@ -2967,7 +3002,8 @@ def recovery_stage_zero_cmd_wheel_action_l2(
         lin_vel_threshold=lin_vel_threshold,
         ang_vel_threshold=ang_vel_threshold,
     )
-    return gate * torch.mean(torch.square(actions[:, [2, 5]]), dim=1)
+    upright_gate = recovery_stand_upright_gate(env, min_upright_factor, upright_threshold, fallen_threshold, asset_cfg)
+    return gate * upright_gate * torch.mean(torch.square(actions[:, [2, 5]]), dim=1)
 
 
 def recovery_stage_wheel_action_l2(
