@@ -221,12 +221,19 @@ class WLVMCVanillaFlatEnvCfg(WLVMCVanillaRoughEnvCfg):
             f"^(?!.*{self.foot_link_name}).*"
         ]
         self.rewards.recovery_still_lin_vel_xy.weight = -8.0
-        self.rewards.recovery_still_lin_vel_xy.params = {"stage": 3}
+        self.rewards.recovery_still_lin_vel_xy.params = {
+            "stage": 3,
+            "min_upright_factor": 0.65,
+        }
         self.rewards.recovery_still_ang_vel_z.weight = -4.0
-        self.rewards.recovery_still_ang_vel_z.params = {"stage": 3}
+        self.rewards.recovery_still_ang_vel_z.params = {
+            "stage": 3,
+            "min_upright_factor": 0.65,
+        }
         self.rewards.recovery_still_wheel_vel.weight = -0.006
         self.rewards.recovery_still_wheel_vel.params = {
             "stage": 3,
+            "min_upright_factor": 0.65,
             "asset_cfg": SceneEntityCfg("robot", joint_names=self.wheel_joint_names),
         }
         self.rewards.recovery_stage_wheel_action.weight = -1.2
@@ -504,13 +511,16 @@ class WLVMCVanillaFlatEnvCfg(WLVMCVanillaRoughEnvCfg):
             "stage0_joint_position_range": (-0.25, 0.25),
             "stage1_joint_position_range": (-0.45, 0.45),
             "stage2_joint_position_range": (-0.7, 0.7),
+            "stage3_joint_position_range": (-0.7, 0.7),
             "stage0_joint_velocity_range": (-0.2, 0.2),
             "stage1_joint_velocity_range": (-0.35, 0.35),
             "stage2_joint_velocity_range": (-0.55, 0.55),
+            "stage3_joint_velocity_range": (-0.55, 0.55),
             "fallen_probability": 1.0,
             "stage0_fallen_probability": 0.75,
             "stage1_fallen_probability": 0.9,
             "stage2_fallen_probability": 1.0,
+            "stage3_fallen_probability": 1.0,
             "stage4_upright_drop_probability": 0.35,
             "stage4_drop_min_substage": 3,
             "stage4_drop_height_range": (0.04, 0.14),

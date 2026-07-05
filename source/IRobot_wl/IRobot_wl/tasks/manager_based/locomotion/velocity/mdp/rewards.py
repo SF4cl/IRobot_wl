@@ -2472,37 +2472,43 @@ def recovery_stand_wheel_vel_l2(
 def recovery_stage_still_lin_vel_xy_l2(
     env: ManagerBasedRLEnv,
     stage: int = 3,
+    min_upright_factor: float | None = None,
     upright_threshold: float = -0.85,
     fallen_threshold: float = -0.35,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
 ) -> torch.Tensor:
     """Penalize horizontal drift only during the static stabilization curriculum stage."""
     stage_gate = recovery_curriculum_gate(env, min_stage=stage, max_stage=stage)
-    return stage_gate * recovery_stand_lin_vel_xy_l2(env, upright_threshold, fallen_threshold, asset_cfg)
+    upright_gate = recovery_stand_upright_gate(env, min_upright_factor, upright_threshold, fallen_threshold, asset_cfg)
+    return stage_gate * upright_gate * recovery_stand_lin_vel_xy_l2(env, upright_threshold, fallen_threshold, asset_cfg)
 
 
 def recovery_stage_still_ang_vel_z_l2(
     env: ManagerBasedRLEnv,
     stage: int = 3,
+    min_upright_factor: float | None = None,
     upright_threshold: float = -0.85,
     fallen_threshold: float = -0.35,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
 ) -> torch.Tensor:
     """Penalize yaw spinning only during the static stabilization curriculum stage."""
     stage_gate = recovery_curriculum_gate(env, min_stage=stage, max_stage=stage)
-    return stage_gate * recovery_stand_ang_vel_z_l2(env, upright_threshold, fallen_threshold, asset_cfg)
+    upright_gate = recovery_stand_upright_gate(env, min_upright_factor, upright_threshold, fallen_threshold, asset_cfg)
+    return stage_gate * upright_gate * recovery_stand_ang_vel_z_l2(env, upright_threshold, fallen_threshold, asset_cfg)
 
 
 def recovery_stage_still_wheel_vel_l2(
     env: ManagerBasedRLEnv,
     stage: int = 3,
+    min_upright_factor: float | None = None,
     upright_threshold: float = -0.85,
     fallen_threshold: float = -0.35,
     asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
 ) -> torch.Tensor:
     """Penalize wheel spin only during the static stabilization curriculum stage."""
     stage_gate = recovery_curriculum_gate(env, min_stage=stage, max_stage=stage)
-    return stage_gate * recovery_stand_wheel_vel_l2(env, upright_threshold, fallen_threshold, asset_cfg)
+    upright_gate = recovery_stand_upright_gate(env, min_upright_factor, upright_threshold, fallen_threshold, asset_cfg)
+    return stage_gate * upright_gate * recovery_stand_wheel_vel_l2(env, upright_threshold, fallen_threshold, asset_cfg)
 
 
 def recovery_stage_wheel_vel_l2(

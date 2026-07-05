@@ -282,13 +282,16 @@ def reset_root_state_fallen(
     stage0_joint_position_range: tuple[float, float] | None = None,
     stage1_joint_position_range: tuple[float, float] | None = None,
     stage2_joint_position_range: tuple[float, float] | None = None,
+    stage3_joint_position_range: tuple[float, float] | None = None,
     stage0_joint_velocity_range: tuple[float, float] | None = None,
     stage1_joint_velocity_range: tuple[float, float] | None = None,
     stage2_joint_velocity_range: tuple[float, float] | None = None,
+    stage3_joint_velocity_range: tuple[float, float] | None = None,
     fallen_probability: float = 1.0,
     stage0_fallen_probability: float | None = None,
     stage1_fallen_probability: float | None = None,
     stage2_fallen_probability: float | None = None,
+    stage3_fallen_probability: float | None = None,
     stage4_upright_drop_probability: float = 0.0,
     stage4_drop_min_substage: int = 3,
     stage4_drop_height_range: tuple[float, float] = (0.03, 0.12),
@@ -392,6 +395,13 @@ def reset_root_state_fallen(
             joint_position_range = stage2_joint_position_range or joint_position_range
             joint_velocity_range = stage2_joint_velocity_range or joint_velocity_range
             fallen_probability = stage2_fallen_probability if stage2_fallen_probability is not None else fallen_probability
+        elif recovery_stage == 3:
+            joint_position_range = stage3_joint_position_range or stage2_joint_position_range or joint_position_range
+            joint_velocity_range = stage3_joint_velocity_range or stage2_joint_velocity_range or joint_velocity_range
+            if stage3_fallen_probability is not None:
+                fallen_probability = stage3_fallen_probability
+            elif stage2_fallen_probability is not None:
+                fallen_probability = stage2_fallen_probability
 
     # --- Determine which envs get fallen vs normal/drop ---
     is_fallen = torch.rand(num_envs, device=device) < fallen_probability
@@ -433,7 +443,7 @@ def reset_root_state_fallen(
                 fall_type = torch.randint(0, 2, (n_fallen,), device=device)
             elif use_recovery_curriculum and recovery_stage == 1:
                 fall_type = torch.multinomial(torch.tensor([0.45, 0.45, 0.10], device=device), n_fallen, replacement=True)
-            elif use_recovery_curriculum and recovery_stage == 2:
+            elif use_recovery_curriculum and recovery_stage in (2, 3):
                 fall_type = torch.multinomial(torch.tensor([0.35, 0.35, 0.30], device=device), n_fallen, replacement=True)
             else:
                 fall_type = torch.randint(0, 3, (n_fallen,), device=device)
